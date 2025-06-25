@@ -2,62 +2,61 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Requests\ProfileUpdateRequest;
-use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Redirect;
 use Inertia\Inertia;
-use Inertia\Response;
 
 class ProfileController extends Controller
 {
-    /**
-     * Display the user's profile form.
-     */
-    public function edit(Request $request): Response
+    public function edit(Request $request)
     {
-        return Inertia::render('Profile/Edit', [
-            'mustVerifyEmail' => $request->user() instanceof MustVerifyEmail,
-            'status' => session('status'),
+        return Inertia::render('UserPages/Profile', [
+            'user' => $request->user(),
         ]);
     }
 
-    /**
-     * Update the user's profile information.
-     */
-    public function update(ProfileUpdateRequest $request): RedirectResponse
+    public function update(Request $request)
     {
-        $request->user()->fill($request->validated());
+        $user = $request->user();
 
-        if ($request->user()->isDirty('email')) {
-            $request->user()->email_verified_at = null;
-        }
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email,' . $user->id,
+            'mobile_number' => 'nullable|string|max:20',
+        ]);
 
-        $request->user()->save();
+        $user->update($request->only('name', 'email', 'mobile_number'));
 
-        return Redirect::route('profile.edit');
+        return back()->with('success', 'Profile updated successfully.');
     }
 
-    /**
-     * Delete the user's account.
-     */
-    public function destroy(Request $request): RedirectResponse
+    public function updatePassword(Request $request)
     {
         $request->validate([
-            'password' => ['required', 'current_password'],
+            'current_password' => 'required',
+            'password' => 'required|string|min:8|confirmed',
         ]);
 
         $user = $request->user();
 
+        if (!\Hash::check($request->current_password, $user->password)) {
+            return back()->withErrors(['current_password' => 'Incorrect current password.']);
+        }
+
+        $user->update(['password' => bcrypt($request->password)]);
+
+        return back()->with('success', 'Password updated successfully.');
+    }
+
+    public function deactivate(Request $request)
+    {
+        $user = $request->user();
+
+        // Soft delete user or mark as deactivated
+        $user->update(['is_blocked' => true]);
+
         Auth::logout();
 
-        $user->delete();
-
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
-
-        return Redirect::to('/');
+        return redirect('/')->with('success', 'Account deactivated successfully.');
     }
 }
