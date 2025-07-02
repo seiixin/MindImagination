@@ -106,30 +106,31 @@ export default function Store() {
         <section className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {assets.map((item, idx) => (
             <div
-              key={idx}
-              className="bg-[#002744] border border-white/20 rounded-lg overflow-hidden shadow-lg hover:scale-105 transition transform duration-200"
+                key={idx}
+                className="bg-[#002744] border border-white/20 rounded-lg overflow-hidden shadow-lg hover:scale-105 transition transform duration-200"
             >
-              <Link href="/assets/sample-slug">
+                <Link href={`/assets/${item.name.toLowerCase().replace(/\s+/g, '-')}`}>
                 <img
-                  src={`/Images/${item.image}`}
-                  alt={item.name}
-                  className="w-full h-40 object-cover"
+                    src={`/Images/${item.image}`}
+                    alt={item.name}
+                    className="w-full h-40 object-cover"
                 />
                 <div className="p-4 space-y-2">
-                  <h3 className="font-bold text-lg">{item.name}</h3>
-                  <p className="text-sm text-white/70">High-quality asset preview with dynamic tags.</p>
-                  <div className="flex items-center justify-between text-sm mt-2">
+                    <h3 className="font-bold text-lg">{item.name}</h3>
+                    <p className="text-sm text-white/70">High-quality asset preview with dynamic tags.</p>
+                    <div className="flex items-center justify-between text-sm mt-2">
                     <span className="text-[#cea76d] font-semibold">1,200 pts</span>
                     <div className="flex gap-2 text-white/60 text-xs items-center">
-                      <span>⭐ 4.5</span>
-                      <span>❤️ 120</span>
-                      <span>👁️ 800</span>
+                        <span>⭐ 4.5</span>
+                        <span>❤️ 120</span>
+                        <span>👁️ 800</span>
                     </div>
-                  </div>
+                    </div>
                 </div>
-              </Link>
+                </Link>
             </div>
-          ))}
+            ))}
+
         </section>
       </div>
     </GuestLayout>

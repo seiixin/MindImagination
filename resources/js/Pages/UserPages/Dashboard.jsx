@@ -1,6 +1,7 @@
 // resources/js/Pages/Dashboard.jsx
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, usePage } from '@inertiajs/react';
+import { Link } from '@inertiajs/react';
 
 export default function Dashboard() {
   const { auth } = usePage().props;
@@ -42,12 +43,13 @@ export default function Dashboard() {
                 (Max Points)
               </p>
             </div>
-            <button
-              className="bg-cyan-400 hover:bg-cyan-300 text-black font-semibold py-2 px-4 rounded shadow transition"
-              onClick={() => alert('Redirecting to Buy Points page')}
+            <Link
+            href={route('buy-points')}
+            className="bg-cyan-400 hover:bg-cyan-300 text-black font-semibold py-2 px-4 rounded shadow transition"
             >
-              BUY POINTS
-            </button>
+            BUY POINTS
+            </Link>
+
           </header>
 
           {/* Assets List */}

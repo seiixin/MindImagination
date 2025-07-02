@@ -14,6 +14,13 @@ Route::get('/', fn () => Inertia::render('GuestPages/Store'))->name('store');
 Route::get('/contact', fn () => Inertia::render('GuestPages/ContactUs'))->name('contact');
 Route::get('/privacy-policy', fn () => Inertia::render('GuestPages/PrivacyPolicy'))->name('privacy');
 
+// ✅ Asset Details page — dynamic slug parameter
+Route::get('/assets/{slug}', fn ($slug) =>
+    Inertia::render('UserPages/AssetDetails', [
+        'slug' => $slug // optional: pass the slug as prop if needed
+    ])
+)->name('assets.details');
+
 // Guest-only Auth Routes
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthenticatedSessionController::class, 'create'])->name('login');
@@ -33,7 +40,7 @@ Route::middleware('guest')->group(function () {
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
-
+    Route::get('/buy-points', fn () => Inertia::render('UserPages/PurchasePoints'))->name('buy-points');
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::patch('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');

@@ -1,5 +1,7 @@
 // resources/js/Components/SignInPanel.jsx
+import React, { useState } from 'react';
 import { Link, useForm } from '@inertiajs/react';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function SignInPanel() {
   const { data, setData, post, processing, errors } = useForm({
@@ -7,9 +9,15 @@ export default function SignInPanel() {
     password: '',
   });
 
+  const [showPassword, setShowPassword] = useState(false);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     post('/login');
+  };
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
   };
 
   return (
@@ -38,15 +46,24 @@ export default function SignInPanel() {
           <label htmlFor="password" className="block mb-1 text-sm font-semibold text-white">
             Password:
           </label>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            value={data.password}
-            onChange={(e) => setData('password', e.target.value)}
-            required
-            className="w-full px-3 py-2 rounded bg-gradient-to-br from-[#82bbbe] to-[#a0d6cd] text-[#113029] font-semibold focus:ring-2 focus:ring-[#29b4e2] focus:outline-none"
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              id="password"
+              name="password"
+              value={data.password}
+              onChange={(e) => setData('password', e.target.value)}
+              required
+              className="w-full px-3 py-2 pr-10 rounded bg-gradient-to-br from-[#82bbbe] to-[#a0d6cd] text-[#113029] font-semibold focus:ring-2 focus:ring-[#29b4e2] focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={togglePasswordVisibility}
+              className="absolute top-1/2 -translate-y-1/2 right-2 flex items-center text-[#113029] hover:text-[#0e6ba0] focus:outline-none"
+            >
+              {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
           {errors.password && <div className="text-red-300 text-sm mt-1">{errors.password}</div>}
         </div>
 

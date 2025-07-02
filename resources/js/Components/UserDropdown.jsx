@@ -18,6 +18,12 @@ export default function UserDropdown({ show }) {
         Profile
       </Link>
       <Link
+        href={route('buy-points')}
+        className="block px-4 py-2 text-sm text-white hover:bg-white/10"
+      >
+        Purchase Points
+      </Link>
+      <Link
         href="/logout"
         method="post"
         as="button"
