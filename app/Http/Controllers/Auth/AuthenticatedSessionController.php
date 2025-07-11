@@ -14,7 +14,7 @@ use Illuminate\Http\RedirectResponse;
 class AuthenticatedSessionController extends Controller
 {
     /**
-     * Show login form using Inertia (GuestPages/Login).
+     * Show the login page.
      */
     public function create(): Response
     {
@@ -25,18 +25,26 @@ class AuthenticatedSessionController extends Controller
     }
 
     /**
-     * Handle login POST request.
+     * Handle login request and redirect based on user role.
      */
     public function store(LoginRequest $request): RedirectResponse
     {
         $request->authenticate();
         $request->session()->regenerate();
 
+        $user = Auth::user();
+
+        if ($user->is_admin) {
+            // Redirect admin to admin dashboard
+            return redirect()->route('admin.dashboard');
+        }
+
+        // Redirect normal users to user dashboard
         return redirect()->intended(route('dashboard'));
     }
 
     /**
-     * Logout and destroy session.
+     * Log out the user and invalidate session.
      */
     public function destroy(Request $request): RedirectResponse
     {

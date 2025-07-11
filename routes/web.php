@@ -46,3 +46,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::patch('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
     Route::delete('/profile/deactivate', [ProfileController::class, 'deactivate'])->name('profile.deactivate');
 });
+
+// Admin-only routes
+Route::middleware(['auth', 'verified', 'is_admin'])->prefix('admin')->name('admin.')->group(function () {
+    Route::get('/dashboard', fn () => Inertia::render('AdminPages/Dashboard'))->name('dashboard');
+    Route::get('/slides', fn () => Inertia::render('AdminPages/FrontPageSlides'))->name('slides');
+    Route::get('/privacy', fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
+    Route::get('/contact', fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
+    Route::get('/users', fn () => Inertia::render('AdminPages/UserList'))->name('users');
+    Route::get('/store-points', fn () => Inertia::render('AdminPages/StorePoints'))->name('store-points');
+    Route::get('/store-category', fn () => Inertia::render('AdminPages/StoreCategory'))->name('store-category');
+    Route::get('/chat', fn () => Inertia::render('AdminPages/ChatSupport'))->name('chat');
+    Route::get('/logs', fn () => Inertia::render('AdminPages/Logs'))->name('logs');
+    Route::get('/backup', fn () => Inertia::render('AdminPages/BackupDatabase'))->name('backup');
+});
