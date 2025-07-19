@@ -53,7 +53,7 @@ Route::middleware(['auth', 'verified', 'is_admin'])->prefix('admin')->name('admi
     Route::get('/slides', fn () => Inertia::render('AdminPages/FrontPageSlides'))->name('slides');
     Route::get('/privacy', fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
     Route::get('/contact', fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
-    Route::get('/users', fn () => Inertia::render('AdminPages/UserList'))->name('users');
+    Route::get('/users', fn () => Inertia::render('AdminPages/Users'))->name('users');
     Route::get('/store-points', fn () => Inertia::render('AdminPages/StorePoints'))->name('store-points');
     Route::get('/store-category', fn () => Inertia::render('AdminPages/StoreCategory'))->name('store-category');
     Route::get('/chat', fn () => Inertia::render('AdminPages/ChatSupport'))->name('chat');
