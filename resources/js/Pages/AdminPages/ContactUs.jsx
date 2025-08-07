@@ -1,27 +1,38 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
 import AdminLayout from '@/Layouts/AdminLayout';
 
 export default function AdminContactSettings() {
   const [formData, setFormData] = useState({
-    email: 'support@mindimagination.com',
-    facebook: 'https://facebook.com/mindimagination',
-    discord: 'https://discord.gg/mindimagination',
-    phone: '+63 912 345 6789',
-    address: '123 Tech St, Bacoor City, Cavite, PH',
-    website: 'https://mindimagination.com/contact',
+    email: '',
+    facebook: '',
+    discord: '',
+    phone: '',
+    address: '',
+    website: '',
   });
 
   const [isEditing, setIsEditing] = useState(false);
 
+  useEffect(() => {
+    axios.get('/admin/contact-setting').then(res => {
+      setFormData(res.data);
+    });
+  }, []);
+
   const handleChange = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleToggleEdit = () => {
+  const handleToggleEdit = async () => {
     if (isEditing) {
-      // mock save — replace with real API later
-      console.log('Saving Contact Us data:', formData);
-      alert('Contact info updated (mock)');
+      try {
+        const res = await axios.put('/admin/contact-setting', formData);
+        alert('Successfully updated contact settings');
+      } catch (err) {
+        console.error(err);
+        alert('Failed to update');
+      }
     }
     setIsEditing(!isEditing);
   };
@@ -40,82 +51,26 @@ export default function AdminContactSettings() {
         </div>
 
         <div className="bg-white shadow border border-gray-200 rounded-xl p-6 space-y-6">
-
-          {/* Email */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Portforward Email Address</label>
-            <input
-              type="email"
-              placeholder="Enter Email Address"
-              value={formData.email}
-              disabled={!isEditing}
-              onChange={(e) => handleChange('email', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
-            />
-          </div>
-
-          {/* Facebook */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Facebook URL Link</label>
-            <input
-              type="text"
-              placeholder="Enter URL Link"
-              value={formData.facebook}
-              disabled={!isEditing}
-              onChange={(e) => handleChange('facebook', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
-            />
-          </div>
-
-          {/* Discord */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Discord URL Link</label>
-            <input
-              type="text"
-              placeholder="Enter URL Link"
-              value={formData.discord}
-              disabled={!isEditing}
-              onChange={(e) => handleChange('discord', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
-            />
-          </div>
-
-          {/* Additional Contact Info */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Phone Number</label>
-            <input
-              type="text"
-              placeholder="Enter Phone Number"
-              value={formData.phone}
-              disabled={!isEditing}
-              onChange={(e) => handleChange('phone', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Physical Address</label>
-            <input
-              type="text"
-              placeholder="Enter Office Address"
-              value={formData.address}
-              disabled={!isEditing}
-              onChange={(e) => handleChange('address', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Contact Form URL</label>
-            <input
-              type="text"
-              placeholder="Enter Contact Page Link"
-              value={formData.website}
-              disabled={!isEditing}
-              onChange={(e) => handleChange('website', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
-            />
-          </div>
+          {[
+            { label: 'Portforward Email Address', name: 'email', type: 'email' },
+            { label: 'Facebook URL Link', name: 'facebook' },
+            { label: 'Discord URL Link', name: 'discord' },
+            { label: 'Phone Number', name: 'phone' },
+            { label: 'Physical Address', name: 'address' },
+            { label: 'Contact Form URL', name: 'website' },
+          ].map(({ label, name, type = 'text' }) => (
+            <div key={name}>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">{label}</label>
+              <input
+                type={type}
+                placeholder={`Enter ${label}`}
+                value={formData[name] || ''}
+                disabled={!isEditing}
+                onChange={(e) => handleChange(name, e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e293b] disabled:bg-gray-100"
+              />
+            </div>
+          ))}
         </div>
       </div>
     </AdminLayout>

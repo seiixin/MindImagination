@@ -12,6 +12,7 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\Admin\ContactSettingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -87,7 +88,7 @@ Route::middleware(['auth', 'verified', 'is_admin'])
 
     /*
     |--------------------------------------------------------------------------
-    | Slide API 
+    | Slide API
     |--------------------------------------------------------------------------
     */
     Route::get('/slides-data', [SlideController::class, 'index']);
@@ -105,4 +106,11 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     Route::post('/policy', [PolicyController::class, 'store']);
     Route::put('/policy/{type}', [PolicyController::class, 'update']);
     Route::delete('/policy/{type}', [PolicyController::class, 'destroy']);
+    /*
+    |--------------------------------------------------------------------------
+    | ContactSettings API
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/contact-setting', [ContactSettingController::class, 'show']);
+    Route::put('/contact-setting', [ContactSettingController::class, 'update']);
 });
