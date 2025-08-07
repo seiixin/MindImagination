@@ -17,11 +17,18 @@ return new class extends Migration
             $table->string('name'); // full name
             $table->string('email')->unique();
             $table->string('mobile_number')->unique();
+            $table->text('address')->nullable(); // Added address field
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->boolean('is_admin')->default(false);
             $table->boolean('is_blocked')->default(false); // for fraud/hacker control
             $table->integer('points')->default(0); // user's wallet points
+
+            // Added the missing status and role fields
+            $table->enum('verification_status', ['verified', 'unverified', 'pending'])->default('pending');
+            $table->enum('active_status', ['enabled', 'disabled'])->default('enabled');
+            $table->enum('role', ['admin', 'editor', 'viewer'])->default('viewer');
+
             $table->rememberToken();
             $table->timestamps();
         });

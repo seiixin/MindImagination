@@ -1,200 +1,133 @@
 import React, { useState } from 'react';
 import AdminLayout from '@/Layouts/AdminLayout';
+import { usePage } from '@inertiajs/react';
+import UserList from '@/Components/Admin/UsersManagement/UserList';
+import UserManagement from '@/Components/Admin/UsersManagement/UserManagement';
 
 export default function Users() {
-  const [registrationPoints, setRegistrationPoints] = useState(999);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [user, setUser] = useState({
-    fullName: 'VIEWING DATA ONLY',
-    userName: 'VIEWING DATA ONLY',
-    emailAddress: 'VIEWING DATA ONLY',
-    mobileNumber: 'VIEWING DATA ONLY',
-    address: 'VIEWING DATA ONLY',
-    userPoints: 999,
-    password: 'qwerty',
-    verificationStatus: 'verified',
-    activeStatus: 'enabled',
-    access: 'admin',
-  });
+  const { users: rawUsers = [] } = usePage().props;
+  const [currentView, setCurrentView] = useState('list'); // 'list', 'management', or null
+  const [selectedUser, setSelectedUser] = useState(null);
 
-  const handleToggleEdit = () => {
-    if (isEditing) {
-      alert('User details saved successfully (mock)');
-    }
-    setIsEditing(!isEditing);
-  };
-
-  const handleChange = (field, value) => {
-    setUser((prev) => ({ ...prev, [field]: value }));
-  };
+  // Debug: Log the raw users data
+  console.log('Raw users from backend:', rawUsers);
 
   const neuShadow = 'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
 
-  return (
-    <AdminLayout>
-      <div className="space-y-6 text-gray-700 max-w-6xl mx-auto p-6">
-        <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold">USER LIST</h1>
-          <button
-            onClick={handleToggleEdit}
-            className={`px-6 py-2 rounded-full font-bold bg-gray-200 ${neuShadow}`}
-          >
-            {isEditing ? 'Save' : 'Edit'}
-          </button>
-        </div>
+  const formatUsers = (users) => {
+    return users.map((u) => ({
+      id: u.id,
+      fullName: u.name || '',
+      userName: u.username || '',
+      emailAddress: u.email || '',
+      mobileNumber: u.mobile_number || '',
+      address: u.address || '',
+      userPoints: u.points || 0,
+      password: '',
+      verificationStatus: u.verification_status || 'pending',
+      activeStatus: u.active_status || 'enabled',
+      access: u.role || 'viewer',
+      created_at: u.created_at,
+      updated_at: u.updated_at,
+    }));
+  };
 
-        {/* Controls */}
-        <div className={`flex flex-wrap gap-4 items-center font-semibold bg-gray-200 p-4 rounded-xl ${neuShadow}`}>
-          <label htmlFor="registrationPoints">User Registration Points:</label>
-          <input
-            id="registrationPoints"
-            type="number"
-            value={registrationPoints}
-            onChange={(e) =>
-              setRegistrationPoints(Math.min(3000, Math.max(0, Number(e.target.value))))
-            }
-            className={`w-24 text-center px-3 py-2 rounded-xl bg-gray-200 outline-none ${neuShadow}`}
-            disabled={!isEditing}
-          />
-          <button className={`px-4 py-2 rounded-full bg-gray-200 ${neuShadow}`} disabled={!isEditing}>
-            UPDATE
-          </button>
-          <button className={`px-4 py-2 rounded-full bg-gray-200 ${neuShadow}`} disabled={!isEditing}>
-            ADD USER
-          </button>
-          <input
-            type="text"
-            placeholder="Search User"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={`flex-grow min-w-[180px] max-w-[350px] px-3 py-2 rounded-xl bg-gray-200 outline-none ${neuShadow}`}
-          />
-          <button className={`px-4 py-2 rounded-full bg-gray-200 ${neuShadow}`}>
-            FIND
-          </button>
-        </div>
+  const formattedUsers = formatUsers(rawUsers);
 
-        <hr className="h-1 bg-gray-300 rounded-xl" />
+  const handleUserSelect = (user) => {
+    setSelectedUser(user);
+    setCurrentView('management');
+  };
 
-        {/* User Details */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleToggleEdit();
-          }}
-          className={`bg-gray-200 p-6 rounded-xl space-y-6 ${neuShadow}`}
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {['fullName', 'userName', 'emailAddress', 'mobileNumber', 'address'].map((field) => (
-              <div key={field} className={`p-4 rounded-xl bg-gray-200 ${neuShadow}`}>
-                <label className="block text-xs font-bold uppercase mb-1 text-gray-600">
-                  {field.replace(/([A-Z])/g, ' $1').toUpperCase()}
-                </label>
-                <input
-                  type="text"
-                  value={user[field]}
-                  onChange={(e) => handleChange(field, e.target.value)}
-                  readOnly={!isEditing}
-                  className="w-full px-3 py-2 rounded-xl bg-gray-200 outline-none text-center"
-                />
-              </div>
-            ))}
+  const handleAddUser = () => {
+    setSelectedUser(null);
+    setCurrentView('management');
+  };
 
-            <div className={`p-4 rounded-xl bg-gray-200 ${neuShadow}`}>
-              <label className="block text-xs font-bold uppercase mb-1 text-gray-600">
-                Add User Points
-              </label>
-              <input
-                type="number"
-                value={user.userPoints}
-                onChange={(e) => handleChange('userPoints', e.target.value)}
-                readOnly={!isEditing}
-                className="w-full px-3 py-2 rounded-xl bg-gray-200 outline-none text-center"
-              />
-            </div>
+  const handleBackToMain = () => {
+    setCurrentView(null);
+    setSelectedUser(null);
+  };
 
-            <div className={`p-4 rounded-xl bg-gray-200 ${neuShadow}`}>
-              <label className="block text-xs font-bold uppercase mb-1 text-gray-600">
-                Reset User Password
-              </label>
-              <input
-                type="text"
-                value={user.password}
-                onChange={(e) => handleChange('password', e.target.value)}
-                readOnly={!isEditing}
-                className="w-full px-3 py-2 rounded-xl bg-gray-200 outline-none text-center"
-              />
-            </div>
+  const renderMainView = () => (
+    <div className="space-y-6 text-gray-700 max-w-6xl mx-auto p-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold">USER MANAGEMENT</h1>
+      </div>
 
-            {[
-              {
-                id: 'verificationStatus',
-                label: 'Verification Status',
-                options: ['verified', 'unverified', 'pending'],
-              },
-              {
-                id: 'activeStatus',
-                label: 'User Active Status',
-                options: ['enabled', 'disabled'],
-              },
-              {
-                id: 'access',
-                label: 'User Access',
-                options: ['admin', 'editor', 'viewer'],
-              },
-            ].map(({ id, label, options }) => (
-              <div key={id} className={`p-4 rounded-xl bg-gray-200 ${neuShadow}`}>
-                <label className="block text-xs font-bold uppercase mb-1 text-gray-600">
-                  {label}
-                </label>
-                <select
-                  value={user[id]}
-                  onChange={(e) => handleChange(id, e.target.value)}
-                  disabled={!isEditing}
-                  className="w-full px-3 py-2 rounded-xl bg-gray-200 outline-none"
-                >
-                  {options.map((option) => (
-                    <option key={option} value={option}>
-                      {option.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+      <div className={`bg-gray-200 p-6 rounded-xl ${neuShadow}`}>
+        <div className="text-center space-y-6">
+          <h2 className="text-xl font-semibold text-gray-700">Choose an Action</h2>
+
+          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+            <button
+              onClick={() => setCurrentView('list')}
+              className={`px-8 py-4 rounded-xl font-bold bg-blue-500 text-white hover:bg-blue-600 transition-colors ${neuShadow}`}
+            >
+              VIEW USER LIST
+            </button>
+
+            <button
+              onClick={handleAddUser}
+              className={`px-8 py-4 rounded-xl font-bold bg-green-500 text-white hover:bg-green-600 transition-colors ${neuShadow}`}
+            >
+              USER MANAGEMENT
+            </button>
           </div>
-        </form>
 
-        {/* Bottom Actions */}
-        <div className="flex flex-wrap gap-4 pt-6">
-          {['fullName', 'userName', 'emailAddress'].map((field) => (
-            <div key={field} className={`p-4 rounded-xl bg-gray-200 ${neuShadow}`}>
-              <label className="block text-xs font-bold uppercase mb-1 text-gray-600">
-                {field.replace(/([A-Z])/g, ' $1').toUpperCase()}
-              </label>
-              <input
-                type="text"
-                value={user[field]}
-                readOnly
-                className="w-full px-3 py-2 rounded-xl bg-gray-200 outline-none text-center"
-              />
-            </div>
-          ))}
-
-          <button
-            className={`px-5 py-2 rounded-full bg-gray-200 font-semibold ${neuShadow}`}
-            disabled={!isEditing}
-          >
-            UPDATE USER
-          </button>
-          <button
-            className={`px-5 py-2 rounded-full text-red-600 font-semibold bg-gray-200 ${neuShadow} hover:text-white hover:bg-red-500 transition`}
-            disabled={!isEditing}
-          >
-            DELETE USER
-          </button>
+          <div className="text-sm text-gray-600 max-w-md mx-auto">
+            <p><strong>User List:</strong> View all users, search, and select users to manage</p>
+            <p><strong>User Management:</strong> Create new users or manage existing ones</p>
+          </div>
         </div>
       </div>
+    </div>
+  );
+
+  return (
+    <AdminLayout>
+      {currentView === null && renderMainView()}
+
+      {currentView === 'list' && (
+        <div className="space-y-6 text-gray-700 max-w-6xl mx-auto p-6">
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold">USER LIST</h1>
+            <button
+              onClick={handleBackToMain}
+              className={`px-5 py-2 rounded-full font-bold bg-gray-500 text-white hover:bg-gray-600 transition-colors ${neuShadow}`}
+            >
+              Back to Main
+            </button>
+          </div>
+
+          <UserList
+            users={formattedUsers}
+            onSelect={handleUserSelect}
+            onAddUser={handleAddUser}
+          />
+        </div>
+      )}
+
+      {currentView === 'management' && (
+        <div className="space-y-6 text-gray-700 max-w-6xl mx-auto p-6">
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold">
+              {selectedUser ? 'EDIT USER' : 'ADD USER'}
+            </h1>
+            <button
+              onClick={handleBackToMain}
+              className={`px-5 py-2 rounded-full font-bold bg-gray-500 text-white hover:bg-gray-600 transition-colors ${neuShadow}`}
+            >
+              Back to Main
+            </button>
+          </div>
+
+          <UserManagement
+            selectedUser={selectedUser}
+            onBack={handleBackToMain}
+          />
+        </div>
+      )}
     </AdminLayout>
   );
 }

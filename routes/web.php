@@ -13,6 +13,7 @@ use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Admin\ContactSettingController;
+use App\Http\Controllers\Admin\UserController;
 
 /*
 |--------------------------------------------------------------------------
@@ -113,4 +114,14 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     */
     Route::get('/contact-setting', [ContactSettingController::class, 'show']);
     Route::put('/contact-setting', [ContactSettingController::class, 'update']);
+    /*
+    |--------------------------------------------------------------------------
+    | User Management API
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/users', [UserController::class, 'index'])->name('users');
+    Route::post('/users', [UserController::class, 'store']);
+    Route::put('/users/{user}', [UserController::class, 'update']);
+    Route::delete('/users/{user}', [UserController::class, 'destroy']);
+
 });
