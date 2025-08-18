@@ -14,6 +14,9 @@ use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Admin\ContactSettingController;
 use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\StoreCategoryController;
+use App\Http\Controllers\Admin\AssetController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -123,5 +126,13 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     Route::post('/users', [UserController::class, 'store']);
     Route::put('/users/{user}', [UserController::class, 'update']);
     Route::delete('/users/{user}', [UserController::class, 'destroy']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Store Category API
+    |--------------------------------------------------------------------------
+    */
+    Route::resource('admin/store-categories', StoreCategoryController::class);
+    Route::resource('admin/assets', AssetController::class);
 
 });

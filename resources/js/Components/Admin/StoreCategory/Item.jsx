@@ -1,48 +1,51 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 
 export default function Item() {
-  const neuShadow = 'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
+  const neuShadow =
+    'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
 
-  const [items, setItems] = useState([
-    {
-      id: 1,
-      name: 'Example Item 1',
-      description: 'Description for Item 1',
-      category: 'Category A',
-      price: 100,
-    },
-    {
-      id: 2,
-      name: 'Example Item 2',
-      description: 'Description for Item 2',
-      category: 'Category B',
-      price: 150,
-    },
-  ]);
+  const [items, setItems] = useState([]);
 
   const [newItem, setNewItem] = useState({
-    name: '',
+    title: '',
     description: '',
-    category: '',
+    category_id: '',
     price: '',
   });
+
+  // Load items from backend
+  useEffect(() => {
+    fetchItems();
+  }, []);
+
+  const fetchItems = async () => {
+    try {
+      const res = await axios.get('/api/admin/assets');
+      setItems(res.data);
+    } catch (e) {
+      console.error('Failed to fetch assets', e);
+    }
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setNewItem({ ...newItem, [name]: value });
   };
 
-  const handleAddItem = () => {
-    if (newItem.name && newItem.price && newItem.category) {
-      setItems([
-        ...items,
-        {
+  const handleAddItem = async () => {
+    if (newItem.title && newItem.price && newItem.category_id) {
+      try {
+        await axios.post('/api/admin/assets', {
+          user_id: 1, // hardcode or use your logged user ID
           ...newItem,
-          id: items.length + 1,
-          price: parseFloat(newItem.price),
-        },
-      ]);
-      setNewItem({ name: '', description: '', category: '', price: '' });
+        });
+
+        setNewItem({ title: '', description: '', category_id: '', price: '' });
+        fetchItems();
+      } catch (e) {
+        console.error('Failed to save asset', e);
+      }
     }
   };
 
@@ -53,10 +56,10 @@ export default function Item() {
       <div className={`p-4 bg-white rounded-lg ${neuShadow} space-y-3`}>
         <input
           type="text"
-          name="name"
+          name="title"
           placeholder="Item Name"
           className="w-full p-2 rounded border"
-          value={newItem.name}
+          value={newItem.title}
           onChange={handleChange}
         />
         <textarea
@@ -68,10 +71,10 @@ export default function Item() {
         />
         <input
           type="text"
-          name="category"
-          placeholder="Category"
+          name="category_id"
+          placeholder="Category ID"
           className="w-full p-2 rounded border"
-          value={newItem.category}
+          value={newItem.category_id}
           onChange={handleChange}
         />
         <input
@@ -92,14 +95,17 @@ export default function Item() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {items.map((item) => (
-          <div key={item.id} className={`p-4 bg-white rounded-lg ${neuShadow}`}>
-            <h3 className="font-semibold text-lg">{item.name}</h3>
+          <div
+            key={item.id}
+            className={`p-4 bg-white rounded-lg ${neuShadow}`}
+          >
+            <h3 className="font-semibold text-lg">{item.title}</h3>
             <p className="text-sm text-gray-600">{item.description}</p>
             <p className="text-sm mt-1">
-              <strong>Category:</strong> {item.category}
+              <strong>Category:</strong> {item.category?.name ?? '—'}
             </p>
             <p className="text-sm">
-              <strong>Price:</strong> ₱{item.price.toFixed(2)}
+              <strong>Price:</strong> ₱{parseFloat(item.price).toFixed(2)}
             </p>
           </div>
         ))}
