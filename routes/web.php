@@ -16,6 +16,8 @@ use App\Http\Controllers\Admin\ContactSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\StoreCategoryController;
 use App\Http\Controllers\Admin\AssetController;
+use App\Http\Controllers\Admin\ChatController;
+use App\Http\Controllers\Admin\LogsController;
 
 
 /*
@@ -132,7 +134,31 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     | Store Category API
     |--------------------------------------------------------------------------
     */
-    Route::resource('admin/store-categories', StoreCategoryController::class);
-    Route::resource('admin/assets', AssetController::class);
+    Route::resource('/store-categories', StoreCategoryController::class);
+    Route::resource('/assets', AssetController::class);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Chat Support API
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/chat/conversations', [ChatController::class, 'getConversations']);
+    Route::get('/chat/conversations/{conversation}', [ChatController::class, 'getMessages']);
+    Route::post('/chat/conversations/{conversation}/messages', [ChatController::class, 'sendMessage']);
+    Route::put('/chat/conversations/{conversation}/status', [ChatController::class, 'updateConversationStatus']);
+    Route::put('/chat/conversations/{conversation}/priority', [ChatController::class, 'updateConversationPriority']);
+    Route::get('/chat/stats', [ChatController::class, 'getStats']);
+    Route::get('/chat/search', [ChatController::class, 'searchConversations']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Logs API
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/logs/purchases', [LogsController::class, 'purchases']);
+    Route::get('/logs/downloads', [LogsController::class, 'downloads']);
+    Route::get('/logs/active-games', [LogsController::class, 'activeGames']);
+    Route::get('/logs/stats', [LogsController::class, 'stats']);
+    Route::get('/logs/export', [LogsController::class, 'export']);
 
 });

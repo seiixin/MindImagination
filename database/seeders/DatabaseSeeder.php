@@ -16,7 +16,10 @@ class DatabaseSeeder extends Seeder
         $this->call([
             UserSeeder::class,
             ContactSettingsSeeder::class,
+            ChatSeeder::class,
+            PolicySeeder::class,
         ]);
+
 
         User::factory()->create([
             'name' => 'Test User',

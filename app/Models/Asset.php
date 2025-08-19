@@ -10,6 +10,7 @@ class Asset extends Model
 
     protected $fillable = [
         'user_id',
+        'category_id',
         'title',
         'description',
         'file_path',
@@ -20,5 +21,11 @@ class Asset extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    // Added this relationship - needed for loading category data
+    public function category()
+    {
+        return $this->belongsTo(StoreCategory::class, 'category_id');
     }
 }
