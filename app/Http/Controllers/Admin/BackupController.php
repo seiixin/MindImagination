@@ -60,9 +60,6 @@ class BackupController extends Controller
 
         $conn = config('database.default');
         $cfg  = config("database.connections.$conn");
-        if (($cfg['driver'] ?? null) !== 'mysql') {
-            return $this->runBackupPurePhp();
-        }
 
         $host = $cfg['host'] ?? '127.0.0.1';
         $port = $cfg['port'] ?? 3306;
@@ -81,48 +78,11 @@ class BackupController extends Controller
         foreach ($candidates as $b) {
             if ($b === 'mysqldump' || file_exists($b)) { $bin = $b; break; }
         }
-        if (!$bin) return $this->runBackupPurePhp();
 
         $base = "\"{$bin}\" --host={$host} --port={$port} --user={$user} --single-transaction --routines --triggers {$db}";
         $cmd  = ($pass === '' ? $base : $base." --password={$pass}") . " > \"{$storagePath}\" 2>&1";
 
         exec($cmd, $log, $code);
-
-        if ($code !== 0 || !file_exists($storagePath) || filesize($storagePath) === 0) {
-            file_put_contents($storagePath.'.err.txt', implode("\n",$log));
-            return $this->runBackupPurePhp();
-        }
-        return $localPath;
-    }
-
-    protected function runBackupPurePhp()
-    {
-        $fileName  = 'fallback-' . date('Y-m-d_His') . '.sql';
-        $localPath = 'backups/' . $fileName;
-
-        $storagePath = storage_path('app/' . str_replace(['\\','/'], DIRECTORY_SEPARATOR, $localPath));
-        $dir = dirname($storagePath);
-        if (!is_dir($dir)) mkdir($dir, 0777, true);
-
-        $conn = config('database.default');
-        $db   = config("database.connections.$conn.database");
-
-        $sql = "-- Fallback backup @ ".now()."\n\n";
-        $tables = DB::select('SHOW TABLES');
-
-        foreach ($tables as $tbl) {
-            $table = array_values((array)$tbl)[0];
-            $create = DB::select("SHOW CREATE TABLE `$table`")[0]->{'Create Table'};
-            $sql .= "DROP TABLE IF EXISTS `$table`;\n$create;\n\n";
-
-            $rows = DB::table($table)->get();
-            foreach($rows as $r){
-                $vals = array_map(fn($v)=> $v===null?'NULL':"'".addslashes($v)."'", (array)$r);
-                $sql .= "INSERT INTO `$table` VALUES (".implode(',',$vals).");\n";
-            }
-            $sql .= "\n";
-        }
-        file_put_contents($storagePath, $sql);
 
         return $localPath;
     }
