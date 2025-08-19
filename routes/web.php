@@ -5,6 +5,7 @@ use Inertia\Inertia;
 
 // Controllers
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Admin\SlideController;
 use App\Http\Controllers\Admin\PolicyController;
@@ -83,6 +84,7 @@ Route::middleware(['auth', 'verified', 'is_admin'])
 
     // Admin pages
     Route::get('/dashboard', fn () => Inertia::render('AdminPages/Dashboard'))->name('dashboard');
+    Route::get('/dashboard-stats', [AdminDashboardController::class, 'stats'])->name('dashboard.stats');
     Route::get('/slides', fn () => Inertia::render('AdminPages/FrontPageSlides'))->name('slides');
     Route::get('/privacy', fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
     Route::get('/contact', fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
