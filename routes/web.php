@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\StoreCategoryController;
 use App\Http\Controllers\Admin\AssetController;
 use App\Http\Controllers\Admin\ChatController;
 use App\Http\Controllers\Admin\LogsController;
+use App\Http\Controllers\Admin\BackupController;
 
 
 /*
@@ -160,5 +161,14 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     Route::get('/logs/active-games', [LogsController::class, 'activeGames']);
     Route::get('/logs/stats', [LogsController::class, 'stats']);
     Route::get('/logs/export', [LogsController::class, 'export']);
-
+    /*
+    |--------------------------------------------------------------------------
+    | Backup Storage API
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/backups', [BackupController::class, 'index']);          // list all
+    Route::post('/backups', [BackupController::class, 'store']);         // create
+    Route::get('/backups/{backup}', [BackupController::class, 'show']);  // show 1
+    Route::put('/backups/{backup}', [BackupController::class, 'update']); // update
+    Route::delete('/backups/{backup}', [BackupController::class, 'destroy']); // delete
 });

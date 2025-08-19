@@ -2,174 +2,272 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 export default function Item() {
-  const neuShadow = 'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
+  const neuShadow =
+    'shadow-[6px_6px_12px_#bebebe,-6px_-6px_12px_#ffffff]';
 
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
 
   const [newItem, setNewItem] = useState({
+    id: null,
     title: '',
     description: '',
     category_id: '',
     price: '',
+    file: null
   });
 
-  // Load items and categories from backend
   useEffect(() => {
     fetchItems();
     fetchCategories();
+
+    const timer = setInterval(() => {
+      if (!loading) fetchItems();
+    }, 10000);
+    return () => clearInterval(timer);
   }, []);
 
   const fetchItems = async () => {
     try {
-      setLoading(true);
-      // Fixed: Removed /api prefix and used correct endpoint
       const res = await axios.get('/admin/assets');
       setItems(res.data);
-      setError('');
-    } catch (e) {
-      console.error('Failed to fetch assets', e);
+    } catch {
       setError('Failed to load items');
+    }
+  };
+
+  const fetchCategories = async () => {
+    const res = await axios.get('/admin/store-categories');
+    setCategories(res.data);
+  };
+
+  const handleChange = (e) => {
+    const { name, value, files } = e.target;
+    if (files) {
+      setNewItem({ ...newItem, file: files[0] });
+    } else {
+      setNewItem({ ...newItem, [name]: value });
+    }
+  };
+
+  const handleFormToggle = () => {
+    setShowForm(!showForm);
+    setNewItem({
+      id: null,
+      title: '',
+      description: '',
+      category_id: '',
+      price: '',
+      file: null
+    });
+  };
+
+  const handleEdit = (item) => {
+    setShowForm(true);
+    setNewItem({
+      id: item.id,
+      title: item.title,
+      description: item.description,
+      category_id: item.category_id,
+      price: item.price,
+      file: null
+    });
+  };
+
+  const handleDelete = async (item) => {
+    if (confirm(`Delete "${item.title}"?`)) {
+      await axios.delete(`/admin/assets/${item.id}`);
+      fetchItems();
+    }
+  };
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('user_id', 1);
+      formData.append('title', newItem.title);
+      formData.append('description', newItem.description);
+      formData.append('category_id', newItem.category_id);
+      formData.append('price', newItem.price);
+      if (newItem.file) formData.append('file_path', newItem.file);
+
+      if (newItem.id) {
+        await axios.post(`/admin/assets/${newItem.id}?_method=PUT`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      } else {
+        await axios.post('/admin/assets', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      }
+      handleFormToggle();
+      fetchItems();
+    } catch {
+      setError('Failed to save item');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchCategories = async () => {
-    try {
-      // Fixed: Removed /api prefix and used correct endpoint
-      const res = await axios.get('/admin/store-categories');
-      setCategories(res.data);
-    } catch (e) {
-      console.error('Failed to fetch categories', e);
-    }
-  };
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setNewItem({ ...newItem, [name]: value });
-  };
-
-  const handleAddItem = async () => {
-    if (newItem.title && newItem.price && newItem.category_id) {
-      try {
-        setLoading(true);
-        // Fixed: Removed /api prefix and used correct endpoint
-        await axios.post('/admin/assets', {
-          user_id: 1, // You should get this from authentication context
-          ...newItem,
-        });
-
-        setNewItem({ title: '', description: '', category_id: '', price: '' });
-        await fetchItems();
-        setError('');
-      } catch (e) {
-        console.error('Failed to save asset', e);
-        setError('Failed to save item');
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      setError('Please fill in all required fields');
-    }
-  };
+  // search / filter
+  const visibleItems = items.filter((i) => {
+    const m1 = i.title.toLowerCase().includes(searchTerm.toLowerCase());
+    const m2 =
+      filterCategory === '' ||
+      (i.category && i.category.id === parseInt(filterCategory));
+    return m1 && m2;
+  });
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold text-gray-700">Manage Items</h2>
-
-      {error && (
-        <div className="p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-          {error}
-        </div>
-      )}
-
-      <div className={`p-4 bg-white rounded-lg ${neuShadow} space-y-3`}>
-        <input
-          type="text"
-          name="title"
-          placeholder="Item Name *"
-          className="w-full p-2 rounded border"
-          value={newItem.title}
-          onChange={handleChange}
-          disabled={loading}
-        />
-        <textarea
-          name="description"
-          placeholder="Description"
-          className="w-full p-2 rounded border"
-          value={newItem.description}
-          onChange={handleChange}
-          disabled={loading}
-        />
-        {/* Fixed: Use dropdown for categories instead of text input */}
-        <select
-          name="category_id"
-          className="w-full p-2 rounded border"
-          value={newItem.category_id}
-          onChange={handleChange}
-          disabled={loading}
-        >
-          <option value="">Select Category *</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
-        <input
-          type="number"
-          name="price"
-          placeholder="Price *"
-          step="0.01"
-          min="0"
-          className="w-full p-2 rounded border"
-          value={newItem.price}
-          onChange={handleChange}
-          disabled={loading}
-        />
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold text-gray-700">Manage Items</h2>
         <button
-          className={`px-4 py-2 text-white rounded transition-colors ${
-            loading
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-700'
-          }`}
-          onClick={handleAddItem}
-          disabled={loading}
+          onClick={handleFormToggle}
+          className={`${neuShadow} bg-blue-200 px-5 py-2 rounded-full`}
         >
-          {loading ? 'Adding...' : 'Add Item'}
+          {showForm ? 'CLOSE FORM' : 'ADD NEW ITEM'}
         </button>
       </div>
 
-      {loading && items.length === 0 ? (
-        <div className="text-center py-4">Loading items...</div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className={`p-4 bg-white rounded-lg ${neuShadow}`}
-            >
-              <h3 className="font-semibold text-lg">{item.title}</h3>
-              <p className="text-sm text-gray-600">{item.description}</p>
-              <p className="text-sm mt-1">
-                <strong>Category:</strong> {item.category?.name ?? 'No Category'}
-              </p>
-              <p className="text-sm">
-                <strong>Price:</strong> ₱{parseFloat(item.price).toFixed(2)}
-              </p>
-            </div>
-          ))}
+      {/* Animated form */}
+      <div
+        className={`transition-all duration-300 overflow-hidden ${
+          showForm ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'
+        }`}
+      >
+        <div
+          className={`p-4 rounded-xl bg-[#e0e0e0] ${neuShadow} space-y-3`}
+        >
+          <input
+            name="title"
+            placeholder="Item name *"
+            className="w-full p-2 rounded-lg bg-white border"
+            value={newItem.title}
+            onChange={handleChange}
+            disabled={loading}
+          />
+          <textarea
+            name="description"
+            placeholder="Description"
+            className="w-full p-2 rounded-lg bg-white border"
+            value={newItem.description}
+            onChange={handleChange}
+            disabled={loading}
+          />
+          <select
+            name="category_id"
+            className="w-full p-2 rounded-lg bg-white border"
+            value={newItem.category_id}
+            onChange={handleChange}
+            disabled={loading}
+          >
+            <option value="">Choose category *</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <input
+            name="price"
+            placeholder="Price *"
+            type="number"
+            min="0"
+            className="w-full p-2 rounded-lg bg-white border"
+            value={newItem.price}
+            onChange={handleChange}
+            disabled={loading}
+          />
+          <input
+            type="file"
+            name="file"
+            accept="image/*"
+            className="w-full p-2 rounded-lg bg-white"
+            onChange={handleChange}
+            disabled={loading}
+          />
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className={`px-5 py-2 rounded-full text-white ${
+              loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+            }`}
+          >
+            {loading ? 'Saving...' : newItem.id ? 'Update' : 'Add Item'}
+          </button>
         </div>
-      )}
+      </div>
 
-      {!loading && items.length === 0 && (
-        <div className="text-center py-8 text-gray-500">
-          No items found. Add your first item above.
-        </div>
-      )}
+      {/* search/filter */}
+      <div className="flex flex-col sm:flex-row gap-3 mt-2">
+        <input
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          placeholder="Search by title..."
+          className={`p-2 rounded-lg bg-white border flex-1 ${neuShadow}`}
+        />
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className={`p-2 rounded-lg bg-white border ${neuShadow}`}
+        >
+          <option value="">All Categories</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* items grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        {visibleItems.map((item) => (
+          <div
+            key={item.id}
+            className={`p-4 rounded-xl bg-[#e00e0e0] ${neuShadow}`}
+          >
+            {item.file_path && (
+              <img
+                src={item.file_path}
+                alt={item.title}
+                className="w-full h-40 rounded-lg object-cover mb-2"
+              />
+            )}
+            <h3 className="font-medium">{item.title}</h3>
+            <p className="text-xs text-gray-700">{item.description}</p>
+            <p className="text-xs mt-1">
+              <strong>Category:</strong>{' '}
+              {item.category?.name || 'No Category'}
+            </p>
+            <p className="text-xs mb-2">
+              <strong>Price:</strong> ₱{parseFloat(item.price).toFixed(2)}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleEdit(item)}
+                className="flex-1 bg-yellow-300 px-3 py-1 rounded-lg"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => handleDelete(item)}
+                className="flex-1 bg-red-300 px-3 py-1 rounded-lg"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
