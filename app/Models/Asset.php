@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -16,6 +17,11 @@ class Asset extends Model
         'file_path',
         'price',
         'is_featured',
+        'maintenance_cost',
+        'video_path',
+        'sub_image_path',
+        'download_file_path',
+        'cover_image_path'
     ];
 
     public function user()
@@ -23,9 +29,46 @@ class Asset extends Model
         return $this->belongsTo(User::class);
     }
 
-    // Added this relationship - needed for loading category data
     public function category()
     {
         return $this->belongsTo(StoreCategory::class, 'category_id');
+    }
+
+    /** user interactions */
+
+    public function comments()
+    {
+        return $this->hasMany(AssetComment::class);
+    }
+
+    public function views()
+    {
+        return $this->hasMany(AssetView::class);
+    }
+
+    public function ratings()
+    {
+        return $this->hasMany(AssetRating::class);
+    }
+
+    public function favorites()
+    {
+        return $this->hasMany(AssetFavorite::class);
+    }
+
+    // Optional helpers
+    public function averageRating()
+    {
+        return $this->ratings()->avg('rating');
+    }
+
+    public function favoritesCount()
+    {
+        return $this->favorites()->count();
+    }
+
+    public function viewsCount()
+    {
+        return $this->views()->count();
     }
 }

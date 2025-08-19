@@ -20,7 +20,8 @@ use App\Http\Controllers\Admin\AssetController;
 use App\Http\Controllers\Admin\ChatController;
 use App\Http\Controllers\Admin\LogsController;
 use App\Http\Controllers\Admin\BackupController;
-
+use App\Http\Controllers\Admin\StorePointsController;
+use App\Http\Controllers\AssetInteractionController;
 
 /*
 |--------------------------------------------------------------------------
@@ -64,13 +65,47 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
     Route::get('/buy-points', fn () => Inertia::render('UserPages/PurchasePoints'))->name('buy-points');
 
-    // Profile management
+    // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::patch('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
     Route::delete('/profile/deactivate', [ProfileController::class, 'deactivate'])->name('profile.deactivate');
-});
 
+    /*
+    |--------------------------------------------------------------------------
+    | Asset Interactions CRUD (user-side)
+    |--------------------------------------------------------------------------
+    |
+    | /assets/{asset}/comments
+    | /assets/{asset}/ratings
+    | /assets/{asset}/favorites
+    | /assets/{asset}/views
+    |
+    */
+
+    Route::prefix('assets/{asset}')->controller(AssetInteractionController::class)->group(function () {
+        // Comments
+        Route::get('/comments',        'commentsIndex');
+        Route::post('/comments',       'commentsStore');
+        Route::put('/comments/{id}',   'commentsUpdate');
+        Route::delete('/comments/{id}','commentsDestroy');
+
+        // Ratings
+        Route::get('/ratings',         'ratingsIndex');
+        Route::post('/ratings',        'ratingsStore');
+        Route::put('/ratings/{id}',    'ratingsUpdate');
+        Route::delete('/ratings/{id}', 'ratingsDestroy');
+
+        // Favorites
+        Route::get('/favorites',       'favoritesIndex');
+        Route::post('/favorites',      'favoritesStore');
+        Route::delete('/favorites/{id}','favoritesDestroy');
+
+        // Views
+        Route::get('/views',           'viewsIndex');
+        Route::post('/views',          'viewsStore');
+    });
+});
 /*
 |--------------------------------------------------------------------------
 | Admin Panel (requires is_admin middleware)
@@ -173,4 +208,16 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     Route::get('/backups/{backup}', [BackupController::class, 'show']);  // show 1
     Route::put('/backups/{backup}', [BackupController::class, 'update']); // update
     Route::delete('/backups/{backup}', [BackupController::class, 'destroy']); // delete
+
+    /*
+    |--------------------------------------------------------------------------
+    | Store Points API
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/store-points/data', [StorePointsController::class, 'index']);
+    Route::post('/store-points/source', [StorePointsController::class, 'createSource']);
+    Route::post('/store-points/payment', [StorePointsController::class, 'createPayment']);
+    Route::put('/store-points/{id}', [StorePointsController::class, 'update']);
+    Route::delete('/store-points/{id}', [StorePointsController::class, 'destroy']);
+
 });

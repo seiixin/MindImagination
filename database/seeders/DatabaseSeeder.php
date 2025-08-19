@@ -19,11 +19,5 @@ class DatabaseSeeder extends Seeder
             ChatSeeder::class,
             PolicySeeder::class,
         ]);
-
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
     }
 }
