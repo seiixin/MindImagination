@@ -219,5 +219,13 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     Route::post('/store-points/payment', [StorePointsController::class, 'createPayment']);
     Route::put('/store-points/{id}', [StorePointsController::class, 'update']);
     Route::delete('/store-points/{id}', [StorePointsController::class, 'destroy']);
+    Route::post('/store-points/keys', [StorePointsController::class, 'saveKeys']);
+    Route::get('/store-points/keys', [StorePointsController::class, 'getKeys']);
+    Route::get('/payment-success', fn () =>
+        Inertia::render('AdminPages/StorePoints/PaymentSuccess')
+    );
 
+    Route::get('/payment-failed', fn () =>
+        Inertia::render('Admin/StorePoints/PaymentFailedPage')
+    );
 });
