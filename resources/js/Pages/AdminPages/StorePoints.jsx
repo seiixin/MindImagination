@@ -18,8 +18,6 @@ export default function StorePoints() {
   const [form, setForm] = useState({ id: null, name: '', points: '', price: '', image_url: '' });
   const [loading, setLoading] = useState(false);
 
-  // optional — available points
-  const [availablePoints, setAvailablePoints] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -311,12 +309,6 @@ export default function StorePoints() {
             ))}
           </div>
 
-          {/* Footer: available points (optional) */}
-          <div className="flex justify-end">
-            <span className="text-sm text-gray-700">
-              Available Points: <b className="text-teal-700">{availablePoints}</b> <span className="text-gray-500">(Max Points)</span>
-            </span>
-          </div>
         </section>
       </div>
     </AdminLayout>

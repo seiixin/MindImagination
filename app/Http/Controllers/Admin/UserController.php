@@ -16,7 +16,6 @@ class UserController extends Controller
         try {
             $users = User::orderBy('created_at', 'desc')->get();
 
-            // Debug: Log the users data to check if status fields are being retrieved
             \Log::info('Users retrieved:', $users->toArray());
 
             return Inertia::render('AdminPages/Users', [
@@ -31,10 +30,13 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Store a newly created user.
+     * Applies "Free Registration Points" if userPoints is not provided.
+     */
     public function store(Request $request)
     {
         try {
-            // Debug: Log incoming request data
             \Log::info('Creating user with data:', $request->all());
 
             $validated = $request->validate([
@@ -43,32 +45,35 @@ class UserController extends Controller
                 'emailAddress' => 'required|email|max:255|unique:users,email',
                 'mobileNumber' => 'required|string|max:20|unique:users,mobile_number',
                 'address' => 'nullable|string|max:1000',
-                'userPoints' => 'required|integer|min:0',
+                // Free Registration Points — optional; fallback to default if empty
+                'userPoints' => 'nullable|integer|min:0',
                 'password' => 'required|string|min:6',
                 'verificationStatus' => 'required|string|in:verified,unverified,pending',
                 'activeStatus' => 'required|string|in:enabled,disabled',
                 'access' => 'required|string|in:admin,editor,viewer',
             ]);
 
+            // Configurable default free points (set in config/app.php => 'default_free_points')
+            $defaultFreePoints = config('app.default_free_points', 100);
+
             $userData = [
                 'name' => $validated['fullName'],
                 'username' => $validated['userName'],
                 'email' => $validated['emailAddress'],
                 'mobile_number' => $validated['mobileNumber'],
-                'address' => $validated['address'],
-                'points' => $validated['userPoints'],
+                'address' => $validated['address'] ?? null,
+                // Apply provided points; otherwise use Free Registration Points default
+                'points' => isset($validated['userPoints']) ? (int) $validated['userPoints'] : $defaultFreePoints,
                 'password' => Hash::make($validated['password']),
                 'verification_status' => $validated['verificationStatus'],
                 'active_status' => $validated['activeStatus'],
                 'role' => $validated['access'],
             ];
 
-            // Debug: Log the data being saved
             \Log::info('User data being created:', $userData);
 
             $user = User::create($userData);
 
-            // Debug: Log created user
             \Log::info('User created successfully:', $user->fresh()->toArray());
 
             return redirect()->back()->with('success', 'User created successfully.');
@@ -87,10 +92,13 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Update an existing user.
+     * Points update only if userPoints is explicitly provided.
+     */
     public function update(Request $request, User $user)
     {
         try {
-            // Debug: Log incoming request data
             \Log::info('=== UPDATE USER REQUEST ===');
             \Log::info('User ID: ' . $user->id);
             \Log::info('Request data:', $request->all());
@@ -102,7 +110,8 @@ class UserController extends Controller
                 'emailAddress' => 'required|email|max:255|unique:users,email,' . $user->id,
                 'mobileNumber' => 'required|string|max:20|unique:users,mobile_number,' . $user->id,
                 'address' => 'nullable|string|max:1000',
-                'userPoints' => 'required|integer|min:0',
+                // Optional on update — only change points if provided
+                'userPoints' => 'nullable|integer|min:0',
                 'password' => 'nullable|string|min:6',
                 'verificationStatus' => 'required|string|in:verified,unverified,pending',
                 'activeStatus' => 'required|string|in:enabled,disabled',
@@ -116,14 +125,17 @@ class UserController extends Controller
                 'username' => $validated['userName'],
                 'email' => $validated['emailAddress'],
                 'mobile_number' => $validated['mobileNumber'],
-                'address' => $validated['address'],
-                'points' => $validated['userPoints'],
+                'address' => $validated['address'] ?? null,
                 'verification_status' => $validated['verificationStatus'],
                 'active_status' => $validated['activeStatus'],
                 'role' => $validated['access'],
             ];
 
-            // Only update password if provided
+            // Only set points if admin entered "Free Registration Points" in the form
+            if (array_key_exists('userPoints', $validated) && $validated['userPoints'] !== null) {
+                $updateData['points'] = (int) $validated['userPoints'];
+            }
+
             if (!empty($validated['password'])) {
                 $updateData['password'] = Hash::make($validated['password']);
                 \Log::info('Password will be updated');
@@ -131,20 +143,15 @@ class UserController extends Controller
                 \Log::info('Password will NOT be updated (empty)');
             }
 
-            // Debug: Log the data being updated
             \Log::info('Update data being sent to database:', $updateData);
 
-            // Perform the update
             $updateResult = $user->update($updateData);
             \Log::info('Update result (boolean):', ['result' => $updateResult]);
 
-            // Refresh the user instance to get updated data from database
             $user->refresh();
 
-            // Debug: Log updated user data from database
             \Log::info('User data AFTER update from database:', $user->toArray());
 
-            // Double-check specific fields
             \Log::info('Specific fields after update:', [
                 'verification_status' => $user->verification_status,
                 'active_status' => $user->active_status,
@@ -164,7 +171,6 @@ class UserController extends Controller
             \Log::error('Error updating user: ' . $e->getMessage());
             \Log::error('Stack trace: ' . $e->getTraceAsString());
 
-            // Log the exact SQL error if available
             if (method_exists($e, 'getSql')) {
                 \Log::error('SQL Error: ' . $e->getSql());
             }
@@ -188,6 +194,67 @@ class UserController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error deleting user: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Failed to delete user: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Assign Free Registration Points to a user.
+     * Supports both:
+     *  - POST /users/{user}/assign-points
+     *  - PATCH /users/{user}/points (named 'points.update')
+     *
+     * Request payload:
+     *  - points: integer (required)
+     *  - mode: 'set' | 'add' | 'sub' (optional; default 'set')
+     */
+    public function assignFreePoints(Request $request, User $user)
+    {
+        try {
+            $validated = $request->validate([
+                'points' => 'required|integer',
+                'mode'   => 'nullable|string|in:set,add,sub,increment,decrement',
+            ]);
+
+            $mode = $validated['mode'] ?? 'set';
+            $before = (int) $user->points;
+            $delta = (int) $validated['points'];
+
+            switch ($mode) {
+                case 'add':
+                case 'increment':
+                    $user->points = $before + $delta;
+                    break;
+
+                case 'sub':
+                case 'decrement':
+                    $user->points = max(0, $before - $delta);
+                    break;
+
+                case 'set':
+                default:
+                    $user->points = max(0, $delta);
+                    break;
+            }
+
+            $user->save();
+
+            \Log::info('Free Registration Points updated', [
+                'user_id' => $user->id,
+                'mode' => $mode,
+                'before' => $before,
+                'delta' => $delta,
+                'after' => $user->points,
+            ]);
+
+            return redirect()->back()->with('success', 'Free Registration Points updated successfully.');
+        } catch (ValidationException $e) {
+            \Log::warning('Validation failed during points assignment:', $e->errors());
+            return redirect()->back()
+                ->withErrors($e->errors())
+                ->withInput($request->all());
+        } catch (\Exception $e) {
+            \Log::error('Error assigning free points: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Failed to assign free points.');
         }
     }
 }

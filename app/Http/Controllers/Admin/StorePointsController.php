@@ -5,97 +5,87 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
-use App\Models\StoreCategory;
 use App\Models\Setting;
-
-
+use App\Models\StorePlan;
 
 class StorePointsController extends Controller
 {
-    /* ======================================================
-        CATEGORIES CRUD
-    =======================================================*/
-
     // GET /admin/store-points/data
+    // Keep this name but return PLANS (not categories)
     public function index()
     {
+        $plans = StorePlan::orderByDesc('id')->get();
         return response()->json([
-            'categories' => StoreCategory::all()
+            'plans' => $plans,
         ]);
     }
 
-    // POST /admin/store-points   (create category)
-    public function store(Request $request)
-    {
-        $category = StoreCategory::create($request->only([
-            'name', 'additional_points', 'purchase_cost'
-        ]));
-
-        return response()->json(['message' => 'Created!', 'data' => $category], 201);
-    }
-
-    // PUT /admin/store-points/{id}
+    // PUT /admin/store-points/{id}  (update a plan)
     public function update(Request $request, $id)
     {
-        $category = StoreCategory::findOrFail($id);
-        $category->update($request->only([
-            'name', 'additional_points', 'purchase_cost'
-        ]));
+        $data = $request->validate([
+            'name'      => 'required|string|max:255',
+            'points'    => 'required|numeric|min:0',
+            'price'     => 'required|numeric|min:0',
+            'image_url' => 'nullable|url|max:2048',
+            'active'    => 'sometimes|boolean',
+        ]);
 
-        return response()->json(['message' => 'Updated!', 'data' => $category]);
+        $plan = StorePlan::findOrFail($id);
+        $plan->update($data);
+
+        return response()->json(['message' => 'Updated!', 'data' => $plan]);
     }
 
-    // DELETE /admin/store-points/{id}
+    // DELETE /admin/store-points/{id}  (delete a plan)
     public function destroy($id)
     {
-        $category = StoreCategory::findOrFail($id);
-        $category->delete();
+        $plan = StorePlan::findOrFail($id);
+        $plan->delete();
 
         return response()->json(['message' => 'Deleted successfully']);
     }
 
-    /* ======================================================
-        PAYMONGO (Sandbox or Live)
-        Make sure your keys are set in config/services.php:
-        'paymongo' => [
-            'secret_key' => env('PAYMONGO_SECRET'),
-        ]
-    =======================================================*/
-
-    /**
-     * POST /admin/store-points/source
-     * Create a payment SOURCE (e.g. GCash / GrabPay)
-     */
+    // POST /admin/store-points/source
     public function createSource(Request $request)
     {
+        $request->validate([
+            'amount' => 'required|integer|min:1',
+            'type'   => 'required|string',
+            'metadata' => 'sometimes|array',
+        ]);
+
         $secretKey = config('services.paymongo.secret_key');
 
         $payload = [
             'data' => [
                 'attributes' => [
-                    'amount'    => (int) $request->amount,
-                    'currency'  => 'PHP',
-                    'type'      => $request->type, // gcash, grab_pay, etc.
-                    'redirect'  => [
+                    'amount'   => (int) $request->amount,
+                    'currency' => 'PHP',
+                    'type'     => $request->type, // gcash, grab_pay, etc.
+                    'redirect' => [
                         'success' => url('/admin/payment-success'),
                         'failed'  => url('/admin/payment-failed'),
                     ],
-                ]
-            ]
+                    'metadata' => (array) $request->metadata,
+                ],
+            ],
         ];
 
-        $response = Http::withBasicAuth($secretKey, '')
+        $resp = Http::withBasicAuth($secretKey, '')
             ->post('https://api.paymongo.com/v1/sources', $payload);
 
-        return response()->json($response->json(), $response->status());
+        return response()->json($resp->json(), $resp->status());
     }
 
-    /**
-     * POST /admin/store-points/payment
-     * Attach a SOURCE and create a PAYMENT
-     */
+    // POST /admin/store-points/payment
     public function createPayment(Request $request)
     {
+        $request->validate([
+            'amount'    => 'required|integer|min:1',
+            'source_id' => 'required|string',
+        ]);
+
         $secretKey = config('services.paymongo.secret_key');
 
         $payload = [
@@ -107,41 +97,46 @@ class StorePointsController extends Controller
                         'id'   => $request->source_id,
                         'type' => 'source',
                     ],
-                ]
-            ]
+                ],
+            ],
         ];
 
-        $response = Http::withBasicAuth($secretKey, '')
+        $resp = Http::withBasicAuth($secretKey, '')
             ->post('https://api.paymongo.com/v1/payments', $payload);
 
-        return response()->json($response->json(), $response->status());
+        return response()->json($resp->json(), $resp->status());
     }
 
+    // POST /admin/store-points/keys
     public function saveKeys(Request $request)
     {
-        if ($request->key_type === 'public') {
-            Setting::updateOrCreate(
-                ['name'=>'paymongo_public'],          // ← save public key here
-                ['value'=>$request->value]
-            );
-        }
+        $request->validate([
+            'key_type' => 'required|in:public,secret',
+            'value'    => 'required|string',
+        ]);
 
-        if ($request->key_type === 'secret') {
-            Setting::updateOrCreate(
-                ['name'=>'paymongo_secret'],          // ← save secret key here
-                ['value'=>$request->value]
-            );
-        }
+        Setting::updateOrCreate(
+            ['name' => $request->key_type === 'public' ? 'paymongo_public' : 'paymongo_secret'],
+            ['value' => $request->value]
+        );
 
         return response()->json(['message' => 'Saved!']);
     }
 
+    // GET /admin/store-points/keys
     public function getKeys()
     {
         return response()->json([
-            'public' => Setting::where('name','paymongo_public')->value('value'),
-            'secret' => Setting::where('name','paymongo_secret')->value('value'),
+            'public' => Setting::where('name', 'paymongo_public')->value('value'),
+            'secret' => Setting::where('name', 'paymongo_secret')->value('value'),
         ]);
     }
 
+    // GET /admin/store-points/available
+    public function available()
+    {
+        // choose one: Setting-based or computed. Here's a computed example:
+        $points = (float) (StorePlan::max('points') ?? 0);
+        return response()->json(['points' => $points]);
+    }
 }

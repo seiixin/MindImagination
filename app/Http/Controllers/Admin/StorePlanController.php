@@ -1,51 +1,58 @@
 <?php
 
-// app/Http/Controllers/Admin/StorePlanController.php
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\StorePlan;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use App\Models\StorePlan;
 
 class StorePlanController extends Controller
 {
+    // GET /admin/store-plans
     public function index()
     {
-        // return array for your axios usage
         return response()->json(StorePlan::orderByDesc('id')->get());
-        // or: return inertia() if you render server-side
     }
 
-    public function store(Request $req)
+    // POST /admin/store-plans
+    public function store(Request $request)
     {
-        $data = $req->validate([
-            'name'      => ['required', 'string', 'max:255', 'unique:store_plans,name'],
-            'points'    => ['required', 'integer', 'min:0'],
-            'price'     => ['required', 'numeric', 'min:0'],
-            'image_url' => ['nullable', 'url', 'max:2048'],
+        $data = $request->validate([
+            'name'      => 'required|string|max:255',
+            'points'    => 'required|numeric|min:0',
+            'price'     => 'required|numeric|min:0',
+            'image_url' => 'nullable|url|max:2048',
+            'active'    => 'sometimes|boolean',
         ]);
-        $plan = StorePlan::create($data);
-        return response()->json(['plan' => $plan], 201);
+
+        $plan = StorePlan::create($data + ['active' => $request->boolean('active', true)]);
+
+        return response()->json(['message' => 'Created!', 'plan' => $plan], 201);
     }
 
-    public function update($id, Request $req)
+    // PUT /admin/store-plans/{id}
+    public function update(Request $request, $id)
     {
+        $data = $request->validate([
+            'name'      => 'required|string|max:255',
+            'points'    => 'required|numeric|min:0',
+            'price'     => 'required|numeric|min:0',
+            'image_url' => 'nullable|url|max:2048',
+            'active'    => 'sometimes|boolean',
+        ]);
+
         $plan = StorePlan::findOrFail($id);
-        $data = $req->validate([
-            'name'      => ['required', 'string', 'max:255', Rule::unique('store_plans','name')->ignore($plan->id)],
-            'points'    => ['required', 'integer', 'min:0'],
-            'price'     => ['required', 'numeric', 'min:0'],
-            'image_url' => ['nullable', 'url', 'max:2048'],
-            'active'    => ['sometimes', 'boolean'],
-        ]);
         $plan->update($data);
-        return response()->json(['plan' => $plan]);
+
+        return response()->json(['message' => 'Updated!', 'plan' => $plan]);
     }
 
+    // DELETE /admin/store-plans/{id}
     public function destroy($id)
     {
-        StorePlan::findOrFail($id)->delete();
-        return response()->json(['ok' => true]);
+        $plan = StorePlan::findOrFail($id);
+        $plan->delete();
+
+        return response()->json(['message' => 'Deleted successfully']);
     }
 }

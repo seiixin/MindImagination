@@ -57,7 +57,6 @@ export default function AdminContactSettings() {
             { label: 'Discord URL Link', name: 'discord' },
             { label: 'Phone Number', name: 'phone' },
             { label: 'Physical Address', name: 'address' },
-            { label: 'Contact Form URL', name: 'website' },
           ].map(({ label, name, type = 'text' }) => (
             <div key={name}>
               <label className="block text-sm font-semibold text-gray-700 mb-1">{label}</label>

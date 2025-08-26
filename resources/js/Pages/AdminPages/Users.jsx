@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import AdminLayout from '@/Layouts/AdminLayout';
 import { usePage } from '@inertiajs/react';
 import UserList from '@/Components/Admin/UsersManagement/UserList';
@@ -9,7 +9,52 @@ export default function Users() {
   const [currentView, setCurrentView] = useState('list'); // 'list', 'management', or null
   const [selectedUser, setSelectedUser] = useState(null);
 
-  // Debug: Log the raw users data
+  // === Free Registration Points state ===
+  const [freeRegPoints, setFreeRegPoints] = useState(100);         // current field value (editable)
+  const [savedFreeRegPoints, setSavedFreeRegPoints] = useState(100); // last saved value
+  const [isEditingFRP, setIsEditingFRP] = useState(false);
+
+  // Load saved value from localStorage on mount
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('freeRegPointsDefault');
+      if (v !== null) {
+        const n = Number(v);
+        if (!Number.isNaN(n) && n >= 0) {
+          setFreeRegPoints(n);
+          setSavedFreeRegPoints(n);
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleEditFRP = () => {
+    setIsEditingFRP(true);
+  };
+
+  const handleCancelFRP = () => {
+    setFreeRegPoints(savedFreeRegPoints);
+    setIsEditingFRP(false);
+  };
+
+  const handleSaveFRP = async () => {
+    const n = Number(freeRegPoints);
+    if (Number.isNaN(n) || n < 0) return;
+
+    // Persist locally (and optionally call your backend here)
+    try {
+      localStorage.setItem('freeRegPointsDefault', String(n));
+    } catch {}
+
+    setSavedFreeRegPoints(n);
+    setIsEditingFRP(false);
+
+    // OPTIONAL: if you later add a backend settings route, call it here:
+    // await router.patch(route('settings.free_points.update'), { value: n });
+    // or fetch('/admin/settings/free-points', { method: 'PATCH', headers: {...}, body: JSON.stringify({ value: n }) })
+  };
+
+  // Debug
   console.log('Raw users from backend:', rawUsers);
 
   const neuShadow = 'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
@@ -100,10 +145,59 @@ export default function Users() {
             </button>
           </div>
 
+          {/* FREE REGISTRATION POINTS with Edit / Save / Cancel */}
+          <div className="flex flex-wrap items-center gap-3 text-gray-700">
+            <label className="text-sm font-semibold tracking-wide">
+              FREE REGISTRATION POINTS:
+            </label>
+
+            <input
+              type="number"
+              min={0}
+              value={freeRegPoints}
+              onChange={(e) => setFreeRegPoints(e.target.value === '' ? '' : Number(e.target.value))}
+              placeholder="e.g. 100"
+              disabled={!isEditingFRP}
+              className={`px-3 py-1 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-100 disabled:text-gray-500 ${neuShadow}`}
+              style={{ width: 140 }}
+            />
+
+            {!isEditingFRP ? (
+              <button
+                onClick={handleEditFRP}
+                className={`px-3 py-1 rounded-md font-semibold bg-blue-500 text-white hover:bg-blue-600 transition-colors ${neuShadow}`}
+              >
+                Edit
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveFRP}
+                  className={`px-3 py-1 rounded-md font-semibold bg-green-500 text-white hover:bg-green-600 transition-colors ${neuShadow}`}
+                >
+                  Save
+                </button>
+                <button
+                  onClick={handleCancelFRP}
+                  className={`px-3 py-1 rounded-md font-semibold bg-gray-500 text-white hover:bg-gray-600 transition-colors ${neuShadow}`}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* hint of current saved value */}
+            <span className="text-xs text-gray-500 ml-1">
+              saved: <strong>{savedFreeRegPoints}</strong>
+            </span>
+          </div>
+
           <UserList
             users={formattedUsers}
             onSelect={handleUserSelect}
             onAddUser={handleAddUser}
+            // You can also pass `savedFreeRegPoints` down if you want to use it as a default:
+            // defaultFreeRegPoints={savedFreeRegPoints}
           />
         </div>
       )}
@@ -122,10 +216,12 @@ export default function Users() {
             </button>
           </div>
 
-          <UserManagement
-            selectedUser={selectedUser}
-            onBack={handleBackToMain}
-          />
+        <UserManagement
+          selectedUser={selectedUser}
+          onBack={handleBackToMain}
+          defaultFreeRegPoints={savedFreeRegPoints} // ← from your “FREE REGISTRATION POINTS” header
+        />
+
         </div>
       )}
     </AdminLayout>
