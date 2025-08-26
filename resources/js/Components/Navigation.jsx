@@ -28,7 +28,7 @@ export default function Navigation() {
         <div className="flex items-center gap-3 pr-4 border-r-2 border-white/20">
           <img src="/Images/logo.png" alt="Logo" className="h-7" />
           <span className="font-semibold tracking-widest text-sm whitespace-nowrap">
-            MIND IMAGINATION
+            GAME ASSETS - STORE
           </span>
         </div>
 
@@ -54,7 +54,7 @@ export default function Navigation() {
           <div className="flex items-center gap-2">
             <img src="/Images/logo.png" alt="Logo" className="h-6" />
             <span className="font-semibold text-xs tracking-wide">
-              MIND IMAGINATION
+              GAME ASSETS - STORE
             </span>
           </div>
           <button

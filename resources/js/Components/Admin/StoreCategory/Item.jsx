@@ -174,7 +174,6 @@ const handleSave = async () => {
 
           {selectedCategory && (
             <div className="text-sm p-2 bg-white rounded-lg border">
-              <p><strong>Price:</strong> ₱{parseFloat(selectedCategory.purchase_cost).toFixed(2)}</p>
               <p><strong>Gives Points:</strong> {selectedCategory.additional_points}</p>
             </div>
           )}

@@ -22,6 +22,7 @@ use App\Http\Controllers\Admin\LogsController;
 use App\Http\Controllers\Admin\BackupController;
 use App\Http\Controllers\Admin\StorePointsController;
 use App\Http\Controllers\AssetInteractionController;
+use App\Http\Controllers\Admin\StorePlanController;
 
 /*
 |--------------------------------------------------------------------------
@@ -228,4 +229,10 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     Route::get('/payment-failed', fn () =>
         Inertia::render('Admin/StorePoints/PaymentFailedPage')
     );
+
+    // Store plans CRUD
+    Route::get   ('/store-plans',        [StorePlanController::class, 'index']);
+    Route::post  ('/store-plans',        [StorePlanController::class, 'store']);
+    Route::put   ('/store-plans/{id}',   [StorePlanController::class, 'update']);
+    Route::delete('/store-plans/{id}',   [StorePlanController::class, 'destroy']);
 });
