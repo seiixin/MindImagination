@@ -9,6 +9,10 @@ export default function Category() {
   const [selected, setSelected] = useState(null); // {id, name, additional_points, purchase_cost}
 
   const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
   const [form, setForm] = useState({
     name: '',
     additional_points: '',
@@ -20,57 +24,107 @@ export default function Category() {
   }, []);
 
   const fetchCategories = async () => {
-    // Keep using the same data source used by StorePoints before
-    const res = await axios.get('/admin/store-points/data');
-    setCategories(res.data.categories || []);
+    try {
+      setLoading(true);
+      setError('');
+      const res = await axios.get('/admin/store-categories');
+      // Controller returns StoreCategory::all() -> array of categories
+      setCategories(Array.isArray(res.data) ? res.data : []);
+    } catch (e) {
+      setError('Failed to load categories.');
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startAddNew = () => {
     setSelected(null);
     setForm({ name: '', additional_points: '', purchase_cost: '' });
     setIsEditing(true);
+    setError('');
   };
 
   const startEdit = (cat) => {
     setSelected(cat);
     setForm({
       name: cat.name ?? '',
-      additional_points: String(cat.additional_points ?? ''),
-      purchase_cost: String(cat.purchase_cost ?? ''),
+      additional_points:
+        cat.additional_points === null || cat.additional_points === undefined
+          ? ''
+          : String(cat.additional_points),
+      purchase_cost:
+        cat.purchase_cost === null || cat.purchase_cost === undefined
+          ? ''
+          : String(cat.purchase_cost),
     });
     setIsEditing(true);
+    setError('');
   };
 
   const onChange = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const toNumberOrNull = (v, isFloat = false) => {
+    if (v === '' || v === null || v === undefined) return null;
+    return isFloat ? parseFloat(v) : parseInt(v, 10);
+  };
+
   const saveCategory = async () => {
     const payload = {
       name: form.name?.trim(),
-      // Keep raw strings; let backend validate/parse (or implement parseFloat if needed):
-      additional_points: form.additional_points,
-      purchase_cost: form.purchase_cost,
+      additional_points: toNumberOrNull(form.additional_points, false),
+      purchase_cost: toNumberOrNull(form.purchase_cost, true),
     };
 
-    if (!payload.name) return;
-
-    if (selected?.id) {
-      await axios.put(`/admin/store-points/${selected.id}`, payload);
-    } else {
-      await axios.post('/admin/store-points', payload);
+    if (!payload.name) {
+      setError('Name is required.');
+      return;
     }
 
-    setIsEditing(false);
-    setSelected(null);
-    setForm({ name: '', additional_points: '', purchase_cost: '' });
-    fetchCategories();
+    try {
+      setSaving(true);
+      setError('');
+
+      if (selected?.id) {
+        await axios.put(`/admin/store-categories/${selected.id}`, payload);
+      } else {
+        await axios.post('/admin/store-categories', payload);
+      }
+
+      setIsEditing(false);
+      setSelected(null);
+      setForm({ name: '', additional_points: '', purchase_cost: '' });
+      await fetchCategories();
+    } catch (e) {
+      // Try to surface Laravel validation errors if present
+      const message =
+        e?.response?.data?.message ||
+        e?.response?.data?.errors
+          ? Object.values(e.response.data.errors).flat().join('\n')
+          : 'Failed to save category.';
+      setError(message);
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const deleteCategory = async (cat) => {
-    if (confirm(`Delete "${cat.name}"?`)) {
-      await axios.delete(`/admin/store-points/${cat.id}`);
-      fetchCategories();
+    if (!cat?.id) return;
+    if (!confirm(`Delete "${cat.name}"?`)) return;
+
+    try {
+      setSaving(true);
+      setError('');
+      await axios.delete(`/admin/store-categories/${cat.id}`);
+      await fetchCategories();
       setSelected(null);
       setIsEditing(false);
+    } catch (e) {
+      setError('Failed to delete category.');
+      console.error(e);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -94,20 +148,34 @@ export default function Category() {
         />
       </div>
 
+      {error && (
+        <div className="bg-red-100 text-red-800 border border-red-200 rounded p-3">
+          {error}
+        </div>
+      )}
+
       {/* List */}
       <div className="flex flex-wrap gap-3">
-        {categories
-          .filter((c) => (c.name || '').toLowerCase().includes(searchTerm.toLowerCase()))
-          .map((c) => (
-            <button
-              key={c.id}
-              onClick={() => startEdit(c)}
-              className={`${neuShadow} bg-gray-200 px-4 py-2 rounded-lg`}
-              title={`+${c.additional_points || 0} pts · ₱${c.purchase_cost || 0}`}
-            >
-              {c.name}
-            </button>
-          ))}
+        {loading ? (
+          <span className="text-gray-500">Loading…</span>
+        ) : categories.length === 0 ? (
+          <span className="text-gray-500">No categories yet.</span>
+        ) : (
+          categories
+            .filter((c) =>
+              (c.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+            )
+            .map((c) => (
+              <button
+                key={c.id}
+                onClick={() => startEdit(c)}
+                className={`${neuShadow} bg-gray-200 px-4 py-2 rounded-lg`}
+                title={`+${c.additional_points ?? 0} pts · ₱${c.purchase_cost ?? 0}`}
+              >
+                {c.name}
+              </button>
+            ))
+        )}
       </div>
 
       {/* FORM PANEL — only show when editing or adding */}
@@ -162,18 +230,20 @@ export default function Category() {
             </span>
             <button
               onClick={saveCategory}
-              className={`${neuShadow} bg-green-400 px-5 py-2 rounded-full font-bold`}
+              disabled={saving}
+              className={`${neuShadow} bg-green-400 px-5 py-2 rounded-full font-bold disabled:opacity-60`}
             >
-              SAVE
+              {saving ? 'SAVING…' : 'SAVE'}
             </button>
           </div>
 
           {selected && (
             <button
               onClick={() => deleteCategory(selected)}
-              className={`${neuShadow} bg-red-300 text-red-800 px-4 py-2 rounded-full font-bold`}
+              disabled={saving}
+              className={`${neuShadow} bg-red-300 text-red-800 px-4 py-2 rounded-full font-bold disabled:opacity-60`}
             >
-              DELETE
+              {saving ? 'DELETING…' : 'DELETE'}
             </button>
           )}
         </div>

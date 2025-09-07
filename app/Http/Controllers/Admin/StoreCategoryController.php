@@ -15,13 +15,24 @@ class StoreCategoryController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
-            'name' => 'required|max:255',
+        $data = $request->validate([
+            'name'              => 'required|string|max:255',
+            'additional_points' => 'nullable|integer|min:0',
+            'purchase_cost'     => 'nullable|numeric|min:0',
         ]);
 
-        $category = StoreCategory::create([
-            'name' => $request->name,
-        ]);
+        // Coerce empty strings to null (in case frontend sends '')
+        $payload = [
+            'name'              => $data['name'],
+            'additional_points' => $request->filled('additional_points')
+                ? (int) $request->input('additional_points')
+                : null,
+            'purchase_cost'     => $request->filled('purchase_cost')
+                ? (float) $request->input('purchase_cost')
+                : null,
+        ];
+
+        $category = StoreCategory::create($payload);
 
         return response()->json($category, 201);
     }
@@ -33,13 +44,23 @@ class StoreCategoryController extends Controller
 
     public function update(Request $request, StoreCategory $storeCategory)
     {
-        $request->validate([
-            'name' => 'required|max:255',
+        $data = $request->validate([
+            'name'              => 'required|string|max:255',
+            'additional_points' => 'nullable|integer|min:0',
+            'purchase_cost'     => 'nullable|numeric|min:0',
         ]);
 
-        $storeCategory->update([
-            'name' => $request->name,
-        ]);
+        $payload = [
+            'name'              => $data['name'],
+            'additional_points' => $request->filled('additional_points')
+                ? (int) $request->input('additional_points')
+                : null,
+            'purchase_cost'     => $request->filled('purchase_cost')
+                ? (float) $request->input('purchase_cost')
+                : null,
+        ];
+
+        $storeCategory->update($payload);
 
         return response()->json($storeCategory);
     }

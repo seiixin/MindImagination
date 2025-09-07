@@ -83,30 +83,30 @@ Route::middleware(['auth', 'verified'])->group(function () {
     | /assets/{asset}/views
     |
     */
-
     Route::prefix('assets/{asset}')->controller(AssetInteractionController::class)->group(function () {
         // Comments
-        Route::get('/comments',        'commentsIndex');
-        Route::post('/comments',       'commentsStore');
-        Route::put('/comments/{id}',   'commentsUpdate');
-        Route::delete('/comments/{id}','commentsDestroy');
+        Route::get   ('/comments',         'commentsIndex');
+        Route::post  ('/comments',         'commentsStore');
+        Route::put   ('/comments/{id}',    'commentsUpdate');
+        Route::delete('/comments/{id}',    'commentsDestroy');
 
         // Ratings
-        Route::get('/ratings',         'ratingsIndex');
-        Route::post('/ratings',        'ratingsStore');
-        Route::put('/ratings/{id}',    'ratingsUpdate');
-        Route::delete('/ratings/{id}', 'ratingsDestroy');
+        Route::get   ('/ratings',          'ratingsIndex');
+        Route::post  ('/ratings',          'ratingsStore');
+        Route::put   ('/ratings/{id}',     'ratingsUpdate');
+        Route::delete('/ratings/{id}',     'ratingsDestroy');
 
         // Favorites
-        Route::get('/favorites',       'favoritesIndex');
-        Route::post('/favorites',      'favoritesStore');
-        Route::delete('/favorites/{id}','favoritesDestroy');
+        Route::get   ('/favorites',        'favoritesIndex');
+        Route::post  ('/favorites',        'favoritesStore');
+        Route::delete('/favorites/{id}',   'favoritesDestroy');
 
         // Views
-        Route::get('/views',           'viewsIndex');
-        Route::post('/views',          'viewsStore');
+        Route::get   ('/views',            'viewsIndex');
+        Route::post  ('/views',            'viewsStore');
     });
 });
+
 /*
 |--------------------------------------------------------------------------
 | Admin Panel (requires is_admin middleware)
@@ -118,28 +118,30 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     ->name('admin.')
     ->group(function () {
 
-    // Admin pages
-    Route::get('/dashboard', fn () => Inertia::render('AdminPages/Dashboard'))->name('dashboard');
-    Route::get('/dashboard-stats', [AdminDashboardController::class, 'stats'])->name('dashboard.stats');
-    Route::get('/slides', fn () => Inertia::render('AdminPages/FrontPageSlides'))->name('slides');
-    Route::get('/privacy', fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
-    Route::get('/contact', fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
-    Route::get('/users', fn () => Inertia::render('AdminPages/Users'))->name('users');
-    Route::get('/store-points', fn () => Inertia::render('AdminPages/StorePoints'))->name('store-points');
+    // Admin pages (Inertia)
+    Route::get('/dashboard',      fn () => Inertia::render('AdminPages/Dashboard'))->name('dashboard');
+    Route::get('/slides',         fn () => Inertia::render('AdminPages/FrontPageSlides'))->name('slides');
+    Route::get('/privacy',        fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
+    Route::get('/contact',        fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
+    Route::get('/users',          fn () => Inertia::render('AdminPages/Users'))->name('users');
+    Route::get('/store-points',   fn () => Inertia::render('AdminPages/StorePoints'))->name('store-points');
     Route::get('/store-category', fn () => Inertia::render('AdminPages/StoreCategory'))->name('store-category');
-    Route::get('/chat', fn () => Inertia::render('AdminPages/ChatSupport'))->name('chat');
-    Route::get('/logs', fn () => Inertia::render('AdminPages/Logs'))->name('logs');
-    Route::get('/backup', fn () => Inertia::render('AdminPages/BackupDatabase'))->name('backup');
+    Route::get('/chat',           fn () => Inertia::render('AdminPages/ChatSupport'))->name('chat');
+    Route::get('/logs',           fn () => Inertia::render('AdminPages/Logs'))->name('logs');
+    Route::get('/backup',         fn () => Inertia::render('AdminPages/BackupDatabase'))->name('backup');
+
+    // Dashboard stats JSON
+    Route::get('/dashboard-stats', [AdminDashboardController::class, 'stats'])->name('dashboard.stats');
 
     /*
     |--------------------------------------------------------------------------
     | Slide API
     |--------------------------------------------------------------------------
     */
-    Route::get('/slides-data', [SlideController::class, 'index']);
-    Route::get('/slides-data/{slide}', [SlideController::class, 'show']);
-    Route::post('/slides-data', [SlideController::class, 'store']);
-    Route::put('/slides-data/{slide}', [SlideController::class, 'update']);
+    Route::get   ('/slides-data',         [SlideController::class, 'index']);
+    Route::get   ('/slides-data/{slide}', [SlideController::class, 'show']);
+    Route::post  ('/slides-data',         [SlideController::class, 'store']);
+    Route::put   ('/slides-data/{slide}', [SlideController::class, 'update']);
     Route::delete('/slides-data/{slide}', [SlideController::class, 'destroy']);
 
     /*
@@ -147,36 +149,49 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     | Policy API
     |--------------------------------------------------------------------------
     */
-    Route::get('/policy', [PolicyController::class, 'index']);
-    Route::post('/policy', [PolicyController::class, 'store']);
-    Route::put('/policy/{type}', [PolicyController::class, 'update']);
-    Route::delete('/policy/{type}', [PolicyController::class, 'destroy']);
+    Route::get   ('/policy',              [PolicyController::class, 'index']);
+    Route::post  ('/policy',              [PolicyController::class, 'store']);
+    Route::put   ('/policy/{type}',       [PolicyController::class, 'update']);
+    Route::delete('/policy/{type}',       [PolicyController::class, 'destroy']);
+
     /*
     |--------------------------------------------------------------------------
     | ContactSettings API
     |--------------------------------------------------------------------------
     */
-    Route::get('/contact-setting', [ContactSettingController::class, 'show']);
-    Route::put('/contact-setting', [ContactSettingController::class, 'update']);
+    Route::get   ('/contact-setting',     [ContactSettingController::class, 'show']);
+    Route::put   ('/contact-setting',     [ContactSettingController::class, 'update']);
+
     /*
     |--------------------------------------------------------------------------
     | User Management API
     |--------------------------------------------------------------------------
     */
-    Route::get('/users', [UserController::class, 'index'])->name('users');
-    Route::post('/users', [UserController::class, 'store']);
-    Route::put('/users/{user}', [UserController::class, 'update']);
-    Route::delete('/users/{user}', [UserController::class, 'destroy']);
-    Route::post('/users/{user}/assign-points', [UserController::class, 'assignFreePoints']);
-    Route::patch('/users/{user}/points', [UserController::class, 'assignFreePoints'])->name('points.update');
-
+    Route::get   ('/users',               [UserController::class, 'index']);   // note: same path as page; this will serve JSON if hit via XHR
+    Route::post  ('/users',               [UserController::class, 'store']);
+    Route::put   ('/users/{user}',        [UserController::class, 'update']);
+    Route::delete('/users/{user}',        [UserController::class, 'destroy']);
+    Route::post  ('/users/{user}/assign-points', [UserController::class, 'assignFreePoints']);
+    Route::patch ('/users/{user}/points',        [UserController::class, 'assignFreePoints'])->name('points.update');
 
     /*
     |--------------------------------------------------------------------------
-    | Store Category API
+    | Store Category API  (USED BY Category.jsx)
     |--------------------------------------------------------------------------
+    | Matches:
+    |   GET    /admin/store-categories
+    |   POST   /admin/store-categories
+    |   GET    /admin/store-categories/{storeCategory}
+    |   PUT    /admin/store-categories/{storeCategory}
+    |   DELETE /admin/store-categories/{storeCategory}
     */
-    Route::resource('/store-categories', StoreCategoryController::class);
+    Route::get   ('/store-categories',                       [StoreCategoryController::class, 'index']);
+    Route::post  ('/store-categories',                       [StoreCategoryController::class, 'store']);
+    Route::get   ('/store-categories/{storeCategory}',       [StoreCategoryController::class, 'show']);
+    Route::put   ('/store-categories/{storeCategory}',       [StoreCategoryController::class, 'update']);
+    Route::delete('/store-categories/{storeCategory}',       [StoreCategoryController::class, 'destroy']);
+
+    // Assets (kept as resource)
     Route::resource('/assets', AssetController::class);
 
     /*
@@ -184,58 +199,54 @@ Route::middleware(['auth', 'verified', 'is_admin'])
     | Chat Support API
     |--------------------------------------------------------------------------
     */
-    Route::get('/chat/conversations', [ChatController::class, 'getConversations']);
-    Route::get('/chat/conversations/{conversation}', [ChatController::class, 'getMessages']);
-    Route::post('/chat/conversations/{conversation}/messages', [ChatController::class, 'sendMessage']);
-    Route::put('/chat/conversations/{conversation}/status', [ChatController::class, 'updateConversationStatus']);
-    Route::put('/chat/conversations/{conversation}/priority', [ChatController::class, 'updateConversationPriority']);
-    Route::get('/chat/stats', [ChatController::class, 'getStats']);
-    Route::get('/chat/search', [ChatController::class, 'searchConversations']);
+    Route::get   ('/chat/conversations',                          [ChatController::class, 'getConversations']);
+    Route::get   ('/chat/conversations/{conversation}',           [ChatController::class, 'getMessages']);
+    Route::post  ('/chat/conversations/{conversation}/messages',  [ChatController::class, 'sendMessage']);
+    Route::put   ('/chat/conversations/{conversation}/status',    [ChatController::class, 'updateConversationStatus']);
+    Route::put   ('/chat/conversations/{conversation}/priority',  [ChatController::class, 'updateConversationPriority']);
+    Route::get   ('/chat/stats',                                  [ChatController::class, 'getStats']);
+    Route::get   ('/chat/search',                                 [ChatController::class, 'searchConversations']);
 
     /*
     |--------------------------------------------------------------------------
     | Logs API
     |--------------------------------------------------------------------------
     */
-    Route::get('/logs/purchases', [LogsController::class, 'purchases']);
-    Route::get('/logs/downloads', [LogsController::class, 'downloads']);
-    Route::get('/logs/active-games', [LogsController::class, 'activeGames']);
-    Route::get('/logs/stats', [LogsController::class, 'stats']);
-    Route::get('/logs/export', [LogsController::class, 'export']);
+    Route::get   ('/logs/purchases',       [LogsController::class, 'purchases']);
+    Route::get   ('/logs/downloads',       [LogsController::class, 'downloads']);
+    Route::get   ('/logs/active-games',    [LogsController::class, 'activeGames']);
+    Route::get   ('/logs/stats',           [LogsController::class, 'stats']);
+    Route::get   ('/logs/export',          [LogsController::class, 'export']);
+
     /*
     |--------------------------------------------------------------------------
     | Backup Storage API
     |--------------------------------------------------------------------------
     */
-    Route::get('/backups', [BackupController::class, 'index']);          // list all
-    Route::post('/backups', [BackupController::class, 'store']);         // create
-    Route::get('/backups/{backup}', [BackupController::class, 'show']);  // show 1
-    Route::put('/backups/{backup}', [BackupController::class, 'update']); // update
-    Route::delete('/backups/{backup}', [BackupController::class, 'destroy']); // delete
+    Route::get   ('/backups',              [BackupController::class, 'index']);          // list all
+    Route::post  ('/backups',              [BackupController::class, 'store']);         // create
+    Route::get   ('/backups/{backup}',     [BackupController::class, 'show']);          // show 1
+    Route::put   ('/backups/{backup}',     [BackupController::class, 'update']);        // update
+    Route::delete('/backups/{backup}',     [BackupController::class, 'destroy']);       // delete
 
     /*
     |--------------------------------------------------------------------------
-    | Store Points API
+    | Store Points API (unchanged)
     |--------------------------------------------------------------------------
     */
-    Route::get('/store-points/data', [StorePointsController::class, 'index']);
-    Route::post('/store-points/source', [StorePointsController::class, 'createSource']);
-    Route::post('/store-points/payment', [StorePointsController::class, 'createPayment']);
-    Route::put('/store-points/{id}', [StorePointsController::class, 'update']);
-    Route::delete('/store-points/{id}', [StorePointsController::class, 'destroy']);
-    Route::post('/store-points/keys', [StorePointsController::class, 'saveKeys']);
-    Route::get('/store-points/keys', [StorePointsController::class, 'getKeys']);
-    Route::get('/payment-success', fn () =>
-        Inertia::render('AdminPages/StorePoints/PaymentSuccess')
-    );
-
-    Route::get('/payment-failed', fn () =>
-        Inertia::render('Admin/StorePoints/PaymentFailedPage')
-    );
+    Route::get   ('/store-points/data',    [StorePointsController::class, 'index']);
+    Route::post  ('/store-points/source',  [StorePointsController::class, 'createSource']);
+    Route::post  ('/store-points/payment', [StorePointsController::class, 'createPayment']);
+    Route::put   ('/store-points/{id}',    [StorePointsController::class, 'update']);
+    Route::delete('/store-points/{id}',    [StorePointsController::class, 'destroy']);
+    Route::post  ('/store-points/keys',    [StorePointsController::class, 'saveKeys']);
+    Route::get   ('/store-points/keys',    [StorePointsController::class, 'getKeys']);
+    Route::get   ('/payment-success',      fn () => Inertia::render('AdminPages/StorePoints/PaymentSuccess'));
+    Route::get   ('/payment-failed',       fn () => Inertia::render('Admin/StorePoints/PaymentFailedPage'));
 
     // Store plans CRUD
-    Route::get   ('/store-plans',        [StorePlanController::class, 'index']);
-    Route::post  ('/store-plans',        [StorePlanController::class, 'store']);
-    Route::put   ('/store-plans/{id}',   [StorePlanController::class, 'update']);
-    Route::delete('/store-plans/{id}',   [StorePlanController::class, 'destroy']);
+    Route::get   ('/store-plans',          [StorePlanController::class, 'index']);
+    Route::post  ('/store-plans',          [StorePlanController::class, 'store']);
+    Route::put   ('/store-plans/{id}',     [StorePlanController::class, 'update']);
+    Route::delete('/store-plans/{id}',     [StorePlanController::class, 'destroy']);
 });

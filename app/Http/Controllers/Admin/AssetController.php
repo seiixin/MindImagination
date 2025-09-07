@@ -5,100 +5,105 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Asset;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 
 class AssetController extends Controller
 {
+    /** Change if you use a custom public disk (e.g. 'uploads') */
+    private string $mediaDisk = 'public';
+    /** Folder inside the disk */
+    private string $mediaDir  = 'assets';
+
     public function index()
     {
-        return response()->json(
-            Asset::with(['category', 'comments', 'views', 'ratings', 'favorites'])->get()
-        );
+        $items = Asset::with(['category','comments','views','ratings','favorites'])->get();
+        $items = $items->map(fn (Asset $a) => $this->transformAsset($a));
+        return response()->json($items);
     }
 
     public function store(Request $request)
     {
         $data = $request->validate([
-            'user_id'              => 'required|exists:users,id',
-            'category_id'          => 'nullable|exists:store_categories,id',
-            'title'                => 'required|max:255',
-            'description'          => 'nullable|string',
-            'price'                => 'nullable|numeric|min:0',
-            'maintenance_cost'     => 'nullable|numeric|min:0',
-            'file_path'            => 'nullable|image|mimes:jpg,jpeg,png,webp',
-            'video_path'           => 'nullable|file|mimes:mp4,mov,avi',
-            'sub_image_path'       => 'nullable|array',
-            'sub_image_path.*'     => 'image|mimes:jpg,jpeg,png,webp',
-            'download_file_path'   => 'nullable|file',
-            'cover_image_path'     => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'user_id'            => 'required|exists:users,id',
+            'category_id'        => 'nullable|exists:store_categories,id',
+            'title'              => 'required|max:255',
+            'description'        => 'nullable|string',
+            'price'              => 'nullable|numeric|min:0',
+            'maintenance_cost'   => 'nullable|numeric|min:0',
+
+            'file_path'          => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'cover_image_path'   => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'video_path'         => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm',
+            'download_file_path' => 'nullable|file',
+            'sub_image_path'     => 'nullable|array',
+            'sub_image_path.*'   => 'image|mimes:jpg,jpeg,png,webp',
         ]);
 
-        // Handle single file fields
-        foreach (['file_path', 'video_path', 'download_file_path', 'cover_image_path'] as $field) {
-            if ($request->hasFile($field)) {
-                $data[$field] = '/storage/' . $request->file($field)->store('assets', 'public');
+        // store single files (DB keeps RELATIVE paths like "assets/xxx.ext")
+        foreach (['file_path','cover_image_path','video_path','download_file_path'] as $f) {
+            if ($request->hasFile($f)) {
+                $data[$f] = $this->storeUploaded($request->file($f));
             }
         }
 
-        // Handle multiple sub images
+        // store multiple sub images
         if ($request->hasFile('sub_image_path')) {
-            $subImages = [];
+            $subs = [];
             foreach ($request->file('sub_image_path') as $file) {
-                $subImages[] = '/storage/' . $file->store('assets', 'public');
+                $subs[] = $this->storeUploaded($file);
             }
-            $data['sub_image_path'] = json_encode($subImages);
+            $data['sub_image_path'] = json_encode($subs);
         }
 
         $asset = Asset::create($data);
+        $asset->load(['category','comments','views','ratings','favorites']);
 
-        return response()->json($asset, 201);
+        return response()->json($this->transformAsset($asset), 201);
     }
 
     public function show(Asset $asset)
     {
-        $asset->load(['category', 'comments', 'views', 'ratings', 'favorites']);
-
-        // Decode sub_image_path if stored as JSON
-        if (is_string($asset->sub_image_path) && $this->isJson($asset->sub_image_path)) {
-            $asset->sub_image_path = json_decode($asset->sub_image_path);
-        }
-
-        return response()->json($asset);
+        $asset->load(['category','comments','views','ratings','favorites']);
+        return response()->json($this->transformAsset($asset));
     }
 
     public function update(Request $request, Asset $asset)
     {
         $data = $request->validate([
-            'user_id'              => 'sometimes|exists:users,id',
-            'category_id'          => 'nullable|exists:store_categories,id',
-            'title'                => 'required|max:255',
-            'description'          => 'nullable|string',
-            'price'                => 'nullable|numeric|min:0',
-            'maintenance_cost'     => 'nullable|numeric|min:0',
-            'file_path'            => 'nullable|image|mimes:jpg,jpeg,png,webp',
-            'video_path'           => 'nullable|file|mimes:mp4,mov,avi',
-            'sub_image_path'       => 'nullable|array',
-            'sub_image_path.*'     => 'image|mimes:jpg,jpeg,png,webp',
-            'download_file_path'   => 'nullable|file',
-            'cover_image_path'     => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'user_id'            => 'sometimes|exists:users,id',
+            'category_id'        => 'nullable|exists:store_categories,id',
+            'title'              => 'required|max:255',
+            'description'        => 'nullable|string',
+            'price'              => 'nullable|numeric|min:0',
+            'maintenance_cost'   => 'nullable|numeric|min:0',
+
+            'file_path'          => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'cover_image_path'   => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'video_path'         => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm',
+            'download_file_path' => 'nullable|file',
+            'sub_image_path'     => 'nullable|array',
+            'sub_image_path.*'   => 'image|mimes:jpg,jpeg,png,webp',
         ]);
 
-        foreach (['file_path', 'video_path', 'download_file_path', 'cover_image_path'] as $field) {
-            if ($request->hasFile($field)) {
-                $data[$field] = '/storage/' . $request->file($field)->store('assets', 'public');
+        foreach (['file_path','cover_image_path','video_path','download_file_path'] as $f) {
+            if ($request->hasFile($f)) {
+                $data[$f] = $this->storeUploaded($request->file($f));
             }
         }
 
         if ($request->hasFile('sub_image_path')) {
-            $subImages = [];
+            $subs = [];
             foreach ($request->file('sub_image_path') as $file) {
-                $subImages[] = '/storage/' . $file->store('assets', 'public');
+                $subs[] = $this->storeUploaded($file);
             }
-            $data['sub_image_path'] = json_encode($subImages);
+            $data['sub_image_path'] = json_encode($subs);
         }
 
         $asset->update($data);
+        $asset->load(['category','comments','views','ratings','favorites']);
 
-        return response()->json($asset);
+        return response()->json($this->transformAsset($asset));
     }
 
     public function destroy(Asset $asset)
@@ -107,9 +112,54 @@ class AssetController extends Controller
         return response()->json(null, 204);
     }
 
-    private function isJson($string)
+    /* ================= Helpers ================= */
+
+    /** Save a file to the configured disk/dir and return a RELATIVE path like "assets/xxx.ext" */
+    private function storeUploaded(UploadedFile $file): string
     {
-        json_decode($string);
-        return json_last_error() === JSON_ERROR_NONE;
+        return $file->store($this->mediaDir, $this->mediaDisk);
+    }
+
+    /** Make public URL from stored path (accepts absolute, /storage/..., or relative) */
+    private function toPublicUrl(?string $path): ?string
+    {
+        if (!$path) return null;
+
+        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+            return $path;
+        }
+
+        if (str_starts_with($path, '/storage/')) {
+            return url($path);
+        }
+
+        return Storage::disk($this->mediaDisk)->url($path); // -> APP_URL/storage/{path}
+    }
+
+    /** Ensure JSON response always contains absolute URLs for media fields */
+    private function transformAsset(Asset $asset): array
+    {
+        $arr = $asset->toArray();
+
+        foreach (['file_path','cover_image_path','video_path','download_file_path'] as $f) {
+            $arr[$f] = $this->toPublicUrl($asset->getRawOriginal($f) ?: $arr[$f] ?? null);
+        }
+
+        // sub images: accept already-decoded array or raw JSON in DB
+        $raw = $asset->getRawOriginal('sub_image_path');
+        $list = [];
+
+        if (is_array($asset->sub_image_path)) {
+            $list = array_map(fn($p) => $this->toPublicUrl($p), $asset->sub_image_path);
+        } elseif (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $list = array_map(fn($p) => $this->toPublicUrl($p), $decoded);
+            }
+        }
+
+        $arr['sub_image_path'] = $list;
+
+        return $arr;
     }
 }
