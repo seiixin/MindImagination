@@ -13,6 +13,7 @@ use App\Models\Asset;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\Admin\SlideController;
 use App\Http\Controllers\Admin\PolicyController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
@@ -102,7 +103,6 @@ Route::middleware('guest')->group(function () {
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
-    Route::get('/buy-points', fn () => Inertia::render('UserPages/PurchasePoints'))->name('buy-points');
 
     // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
@@ -117,10 +117,19 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get   ('/conversations/{conversation}',     [ChatSupportController::class, 'show'])->name('conversations.show');
     Route::post  ('/conversations/{conversation}/messages', [ChatSupportController::class, 'sendMessage'])->name('messages.store');
     Route::put   ('/conversations/{conversation}/status',    [ChatSupportController::class, 'updateStatus'])->name('conversations.status');
-
     // optional delete of a user-owned message
     Route::delete('/messages/{message}', [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
     });
+
+        // Purchase Plans
+
+    Route::get ('/buy-points',       [PurchaseController::class, 'index'])->name('buy-points');
+    Route::post('/paymongo/source',  [PurchaseController::class, 'createSource'])->name('paymongo.source');
+    Route::post('/paymongo/payment', [PurchaseController::class, 'createPayment'])->name('paymongo.payment');
+
+    Route::get ('/payment-success',  [PurchaseController::class, 'success'])->name('payment.success');
+    Route::get ('/payment-failed',   [PurchaseController::class, 'failed'])->name('payment.failed');
+
     // Asset Interactions (CRUD)
     Route::prefix('assets/{asset}')
         ->controller(AssetInteractionController::class)
