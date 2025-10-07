@@ -70,4 +70,16 @@ public function update(Request $request, Slide $slide)
         $slide->delete();
         return response()->json(['message' => 'Slide deleted successfully']);
     }
+
+    // add this method
+public function publicIndex()
+{
+    return \App\Models\Slide::query()
+        // remove these when(...) lines if you don't have these columns
+        ->when(\Schema::hasColumn('slides', 'is_featured'), fn($q) => $q->where('is_featured', true))
+        ->when(\Schema::hasColumn('slides', 'is_active'), fn($q) => $q->where('is_active', true))
+        ->when(\Schema::hasColumn('slides', 'sort_order'), fn($q) => $q->orderBy('sort_order'))
+        ->get(['id','image_path','details']);
+}
+
 }

@@ -14,17 +14,18 @@ return new class extends Migration
             // owner/user
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
 
-            // For Store Category relation
+            // Store Category relation
             $table->foreignId('category_id')
-                  ->nullable()
-                  ->constrained('store_categories')
-                  ->onDelete('set null');
+                ->nullable()
+                ->constrained('store_categories')
+                ->nullOnDelete();
 
             // item details
-            $table->string('title');              // item name
+            $table->string('title');                       // item name
             $table->text('description')->nullable();
-            $table->string('file_path')->nullable(); // allow null for admin
-            $table->decimal('price', 8, 2)->default(0);
+            $table->string('file_path')->nullable();       // allow null for admin uploads
+            $table->decimal('price', 10, 2)->default(0);   // per-asset price
+            $table->unsignedInteger('points')->default(0); // per-asset points
             $table->boolean('is_featured')->default(false);
 
             $table->timestamps();

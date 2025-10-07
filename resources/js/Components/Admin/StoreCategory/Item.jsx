@@ -20,6 +20,8 @@ export default function Item() {
     title: '',
     description: '',
     category_id: '',
+    price: '',              // NEW
+    points: '',             // NEW
     // file inputs (MUST match backend field names)
     file_path: null,            // main image
     cover_image_path: null,     // cover image
@@ -39,7 +41,7 @@ export default function Item() {
       setError('');
       const res = await axios.get('/admin/assets');
       setItems(Array.isArray(res.data) ? res.data : []);
-    } catch {
+    } catch (e) {
       setError('Failed to load items');
     } finally {
       setLoading(false);
@@ -61,6 +63,8 @@ export default function Item() {
       title: '',
       description: '',
       category_id: '',
+      price: '',
+      points: '',
       file_path: null,
       cover_image_path: null,
       video_path: null,
@@ -75,7 +79,7 @@ export default function Item() {
     resetForm();
   };
 
-  // Edit existing item — reset file inputs, keep text/category
+  // Edit existing item — reset file inputs, keep text/category + price/points
   const handleEdit = (item) => {
     setShowForm(true);
     setError('');
@@ -84,6 +88,8 @@ export default function Item() {
       title: item.title || '',
       description: item.description || '',
       category_id: item.category_id || '',
+      price: item.price ?? '',     // NEW
+      points: item.points ?? '',   // NEW
       file_path: null,
       cover_image_path: null,
       video_path: null,
@@ -123,6 +129,16 @@ export default function Item() {
     [newItem.sub_image_path]
   );
 
+  // Helper: normalize media URLs if API returns "assets/..." instead of "/storage/assets/..."
+  const normalizeMediaUrl = (u) => {
+    if (!u) return null;
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+    if (u.startsWith('/storage/')) return u;
+    const cleaned = u.replace(/^\/+/, ''); // strip leading slash
+    if (cleaned.startsWith('assets/')) return `/storage/${cleaned}`;
+    return u; // fall back as-is
+  };
+
   // Add / Update
   const handleSave = async () => {
     if (!newItem.title?.trim() || !newItem.category_id) {
@@ -139,10 +155,14 @@ export default function Item() {
       formData.append('description', newItem.description || '');
       formData.append('category_id', newItem.category_id || '');
 
-      if (newItem.file_path)         formData.append('file_path', newItem.file_path);
-      if (newItem.cover_image_path)  formData.append('cover_image_path', newItem.cover_image_path);
-      if (newItem.video_path)        formData.append('video_path', newItem.video_path);
-      if (newItem.download_file_path)formData.append('download_file_path', newItem.download_file_path);
+      // NEW: price & points (only send if provided; backend has defaults)
+      if (newItem.price !== '' && newItem.price != null) formData.append('price', newItem.price);
+      if (newItem.points !== '' && newItem.points != null) formData.append('points', newItem.points);
+
+      if (newItem.file_path)          formData.append('file_path', newItem.file_path);
+      if (newItem.cover_image_path)   formData.append('cover_image_path', newItem.cover_image_path);
+      if (newItem.video_path)         formData.append('video_path', newItem.video_path);
+      if (newItem.download_file_path) formData.append('download_file_path', newItem.download_file_path);
       if (newItem.sub_image_path?.length) {
         newItem.sub_image_path.forEach((file) => formData.append('sub_image_path[]', file));
       }
@@ -179,6 +199,20 @@ export default function Item() {
 
   const selectedCategory = categories.find((c) => c.id === parseInt(newItem.category_id));
 
+  // Helpers for display values on the grid (fallback to category defaults)
+  const priceOf = (item) => {
+    const v = item?.price;
+    const fallback = Number(item?.category?.purchase_cost ?? 0);
+    const n = v === null || v === undefined || v === '' ? fallback : Number(v);
+    return isNaN(n) ? 0 : n;
+  };
+  const pointsOf = (item) => {
+    const v = item?.points;
+    const fallback = Number(item?.category?.additional_points ?? 0);
+    const n = v === null || v === undefined || v === '' ? fallback : Number(v);
+    return isNaN(n) ? 0 : n;
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -194,6 +228,7 @@ export default function Item() {
         </div>
       )}
 
+      {/* FORM */}
       <div className={`transition-all duration-300 overflow-hidden ${showForm ? 'max-h-[3000px] opacity-100' : 'max-h-0 opacity-0'}`}>
         <div className={`p-4 rounded-xl bg-[#e0e0e0] ${neuShadow} space-y-3`}>
           <input
@@ -230,10 +265,45 @@ export default function Item() {
 
           {selectedCategory && (
             <div className="text-sm p-2 bg-white rounded-lg border">
-              <p><strong>Gives Points:</strong> {selectedCategory.additional_points ?? 0}</p>
+              <p><strong>Default Points:</strong> {selectedCategory.additional_points ?? 0}</p>
               <p><strong>Default Price:</strong> ₱{parseFloat(selectedCategory.purchase_cost ?? 0).toFixed(2)}</p>
             </div>
           )}
+
+          {/* NEW: Price & Points overrides */}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">Price (override)</label>
+              <input
+                name="price"
+                type="number"
+                step="0.01"
+                placeholder="e.g. 199.00"
+                className="w-full p-2 rounded-lg bg-white border"
+                value={newItem.price}
+                onChange={handleChange}
+                disabled={saving}
+              />
+              <p className="text-xs text-gray-600 mt-1">
+                Leave blank to use category default.
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Points (override)</label>
+              <input
+                name="points"
+                type="number"
+                placeholder="e.g. 50"
+                className="w-full p-2 rounded-lg bg-white border"
+                value={newItem.points}
+                onChange={handleChange}
+                disabled={saving}
+              />
+              <p className="text-xs text-gray-600 mt-1">
+                Leave blank to use category default.
+              </p>
+            </div>
+          </div>
 
           {/* Main image */}
           <label className="text-sm">Main image (file_path)</label>
@@ -352,42 +422,48 @@ export default function Item() {
         {loading ? (
           <div className="col-span-full text-center text-gray-600">Loading…</div>
         ) : (
-          visibleItems.map((item) => (
-            <div key={item.id} className={`p-4 rounded-xl bg-[#e0e0e0] ${neuShadow}`}>
-              {(item.file_path || item.cover_image_path) && (
-                <img
-                  src={item.file_path || item.cover_image_path}
-                  alt={item.title}
-                  className="w-full h-40 rounded-lg object-cover mb-2"
-                  onError={(e) => (e.currentTarget.style.display = 'none')}
-                />
-              )}
+          visibleItems.map((item) => {
+            const imgSrc = normalizeMediaUrl(item.file_path) || normalizeMediaUrl(item.cover_image_path);
+            const price = priceOf(item);
+            const pts = pointsOf(item);
 
-              <h3 className="font-medium">{item.title}</h3>
-              <p className="text-xs text-gray-700">{item.description}</p>
+            return (
+              <div key={item.id} className={`p-4 rounded-xl bg-[#e0e0e0] ${neuShadow}`}>
+                {imgSrc && (
+                  <img
+                    src={imgSrc}
+                    alt={item.title}
+                    className="w-full h-40 rounded-lg object-cover mb-2"
+                    onError={(e) => (e.currentTarget.style.display = 'none')}
+                  />
+                )}
 
-              <p className="text-xs mt-1"><strong>Comments:</strong> {item.comments?.length ?? 0}</p>
-              <p className="text-xs"><strong>Views:</strong> {item.views?.length ?? 0}</p>
-              <p className="text-xs"><strong>Favorites:</strong> {item.favorites?.length ?? 0}</p>
-              <p className="text-xs">
-                <strong>Avg Rating:</strong>{' '}
-                {item.ratings?.length
-                  ? (item.ratings.reduce((t, r) => t + r.rating, 0) / item.ratings.length).toFixed(1)
-                  : '0.0'}
-              </p>
+                <h3 className="font-medium">{item.title}</h3>
+                <p className="text-xs text-gray-700">{item.description}</p>
 
-              <p className="text-xs mt-1"><strong>Category:</strong> {item.category?.name || 'No Category'}</p>
-              <p className="text-xs mb-2">
-                <strong>Price:</strong> ₱{parseFloat(item.category?.purchase_cost ?? 0).toFixed(2)} ({item.category?.additional_points ?? 0} pts)
-              </p>
+                <p className="text-xs mt-1"><strong>Comments:</strong> {item.comments?.length ?? 0}</p>
+                <p className="text-xs"><strong>Views:</strong> {item.views?.length ?? 0}</p>
+                <p className="text-xs"><strong>Favorites:</strong> {item.favorites?.length ?? 0}</p>
+                <p className="text-xs">
+                  <strong>Avg Rating:</strong>{' '}
+                  {item.ratings?.length
+                    ? (item.ratings.reduce((t, r) => t + r.rating, 0) / item.ratings.length).toFixed(1)
+                    : '0.0'}
+                </p>
 
-              <div className="flex gap-2">
-                <button onClick={() => setDetailId(item.id)} className="flex-1 bg-blue-300 px-3 py-1 rounded-lg">View</button>
-                <button onClick={() => handleEdit(item)} className="flex-1 bg-yellow-300 px-3 py-1 rounded-lg">Edit</button>
-                <button onClick={() => handleDelete(item)} className="flex-1 bg-red-300 px-3 py-1 rounded-lg">Delete</button>
+                <p className="text-xs mt-1"><strong>Category:</strong> {item.category?.name || 'No Category'}</p>
+                <p className="text-xs mb-2">
+                  <strong>Price:</strong> ₱{price.toFixed(2)} ({pts} pts)
+                </p>
+
+                <div className="flex gap-2">
+                  <button onClick={() => setDetailId(item.id)} className="flex-1 bg-blue-300 px-3 py-1 rounded-lg">View</button>
+                  <button onClick={() => handleEdit(item)} className="flex-1 bg-yellow-300 px-3 py-1 rounded-lg">Edit</button>
+                  <button onClick={() => handleDelete(item)} className="flex-1 bg-red-300 px-3 py-1 rounded-lg">Delete</button>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 

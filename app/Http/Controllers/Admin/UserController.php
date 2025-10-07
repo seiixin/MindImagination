@@ -7,25 +7,31 @@ use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class UserController extends Controller
 {
+    /**
+     * List users (newest first).
+     */
     public function index()
     {
         try {
-            $users = User::orderBy('created_at', 'desc')->get();
+            $users = User::orderByDesc('created_at')->get();
 
             \Log::info('Users retrieved:', $users->toArray());
 
             return Inertia::render('AdminPages/Users', [
-                'users' => $users
+                'users' => $users,
             ]);
         } catch (\Exception $e) {
             \Log::error('Error fetching users: ' . $e->getMessage());
+
             return Inertia::render('AdminPages/Users', [
                 'users' => [],
-                'error' => 'Failed to load users'
+                'error' => 'Failed to load users',
             ]);
         }
     }
@@ -40,34 +46,34 @@ class UserController extends Controller
             \Log::info('Creating user with data:', $request->all());
 
             $validated = $request->validate([
-                'fullName' => 'required|string|max:255',
-                'userName' => 'required|string|max:255|unique:users,username',
-                'emailAddress' => 'required|email|max:255|unique:users,email',
-                'mobileNumber' => 'required|string|max:20|unique:users,mobile_number',
-                'address' => 'nullable|string|max:1000',
-                // Free Registration Points — optional; fallback to default if empty
-                'userPoints' => 'nullable|integer|min:0',
-                'password' => 'required|string|min:6',
+                'fullName'           => 'required|string|max:255',
+                'userName'           => 'required|string|max:255|unique:users,username',
+                'emailAddress'       => 'required|email|max:255|unique:users,email',
+                'mobileNumber'       => 'required|string|max:20|unique:users,mobile_number',
+                'address'            => 'nullable|string|max:1000',
+                'userPoints'         => 'nullable|integer|min:0',
+                'password'           => 'required|string|min:6',
                 'verificationStatus' => 'required|string|in:verified,unverified,pending',
-                'activeStatus' => 'required|string|in:enabled,disabled',
-                'access' => 'required|string|in:admin,editor,viewer',
+                'activeStatus'       => 'required|string|in:enabled,disabled',
+                'access'             => 'required|string|in:admin,editor,viewer',
             ]);
 
-            // Configurable default free points (set in config/app.php => 'default_free_points')
+            // Configurable default free points
             $defaultFreePoints = config('app.default_free_points', 100);
 
             $userData = [
-                'name' => $validated['fullName'],
-                'username' => $validated['userName'],
-                'email' => $validated['emailAddress'],
-                'mobile_number' => $validated['mobileNumber'],
-                'address' => $validated['address'] ?? null,
-                // Apply provided points; otherwise use Free Registration Points default
-                'points' => isset($validated['userPoints']) ? (int) $validated['userPoints'] : $defaultFreePoints,
-                'password' => Hash::make($validated['password']),
-                'verification_status' => $validated['verificationStatus'],
-                'active_status' => $validated['activeStatus'],
-                'role' => $validated['access'],
+                'name'                 => $validated['fullName'],
+                'username'             => $validated['userName'],
+                'email'                => $validated['emailAddress'],
+                'mobile_number'        => $validated['mobileNumber'],
+                'address'              => $validated['address'] ?? null,
+                'points'               => isset($validated['userPoints'])
+                                            ? (int) $validated['userPoints']
+                                            : $defaultFreePoints,
+                'password'             => Hash::make($validated['password']),
+                'verification_status'  => $validated['verificationStatus'],
+                'active_status'        => $validated['activeStatus'],
+                'role'                 => $validated['access'],
             ];
 
             \Log::info('User data being created:', $userData);
@@ -77,16 +83,19 @@ class UserController extends Controller
             \Log::info('User created successfully:', $user->fresh()->toArray());
 
             return redirect()->back()->with('success', 'User created successfully.');
-
         } catch (ValidationException $e) {
             \Log::warning('Validation failed during user creation:', $e->errors());
-            return redirect()->back()
+
+            return redirect()
+                ->back()
                 ->withErrors($e->errors())
                 ->withInput($request->all());
         } catch (\Exception $e) {
             \Log::error('Error creating user: ' . $e->getMessage());
             \Log::error('Stack trace: ' . $e->getTraceAsString());
-            return redirect()->back()
+
+            return redirect()
+                ->back()
                 ->with('error', 'Failed to create user: ' . $e->getMessage())
                 ->withInput($request->all());
         }
@@ -95,6 +104,7 @@ class UserController extends Controller
     /**
      * Update an existing user.
      * Points update only if userPoints is explicitly provided.
+     * If user is disabled, purge their sessions and rotate remember token.
      */
     public function update(Request $request, User $user)
     {
@@ -105,33 +115,35 @@ class UserController extends Controller
             \Log::info('Current user data BEFORE update:', $user->toArray());
 
             $validated = $request->validate([
-                'fullName' => 'required|string|max:255',
-                'userName' => 'required|string|max:255|unique:users,username,' . $user->id,
-                'emailAddress' => 'required|email|max:255|unique:users,email,' . $user->id,
-                'mobileNumber' => 'required|string|max:20|unique:users,mobile_number,' . $user->id,
-                'address' => 'nullable|string|max:1000',
-                // Optional on update — only change points if provided
-                'userPoints' => 'nullable|integer|min:0',
-                'password' => 'nullable|string|min:6',
+                'fullName'           => 'required|string|max:255',
+                'userName'           => 'required|string|max:255|unique:users,username,' . $user->id,
+                'emailAddress'       => 'required|email|max:255|unique:users,email,' . $user->id,
+                'mobileNumber'       => 'required|string|max:20|unique:users,mobile_number,' . $user->id,
+                'address'            => 'nullable|string|max:1000',
+                'userPoints'         => 'nullable|integer|min:0',
+                'password'           => 'nullable|string|min:6',
                 'verificationStatus' => 'required|string|in:verified,unverified,pending',
-                'activeStatus' => 'required|string|in:enabled,disabled',
-                'access' => 'required|string|in:admin,editor,viewer',
+                'activeStatus'       => 'required|string|in:enabled,disabled',
+                'access'             => 'required|string|in:admin,editor,viewer',
             ]);
 
             \Log::info('Validated data:', $validated);
 
+            // Capture old status BEFORE update
+            $wasEnabled = $user->getOriginal('active_status') === 'enabled';
+
             $updateData = [
-                'name' => $validated['fullName'],
-                'username' => $validated['userName'],
-                'email' => $validated['emailAddress'],
-                'mobile_number' => $validated['mobileNumber'],
-                'address' => $validated['address'] ?? null,
-                'verification_status' => $validated['verificationStatus'],
-                'active_status' => $validated['activeStatus'],
-                'role' => $validated['access'],
+                'name'                 => $validated['fullName'],
+                'username'             => $validated['userName'],
+                'email'                => $validated['emailAddress'],
+                'mobile_number'        => $validated['mobileNumber'],
+                'address'              => $validated['address'] ?? null,
+                'verification_status'  => $validated['verificationStatus'],
+                'active_status'        => $validated['activeStatus'],
+                'role'                 => $validated['access'],
             ];
 
-            // Only set points if admin entered "Free Registration Points" in the form
+            // Only set points if explicitly provided
             if (array_key_exists('userPoints', $validated) && $validated['userPoints'] !== null) {
                 $updateData['points'] = (int) $validated['userPoints'];
             }
@@ -148,23 +160,47 @@ class UserController extends Controller
             $updateResult = $user->update($updateData);
             \Log::info('Update result (boolean):', ['result' => $updateResult]);
 
+            // Reload the latest values
             $user->refresh();
+
+            // If status flipped from enabled -> disabled, revoke remember token & purge sessions (DB driver)
+            if ($wasEnabled && $user->active_status !== 'enabled') {
+                \Log::info('User moved to DISABLED — revoking remember token and purging sessions', [
+                    'user_id' => $user->id,
+                ]);
+
+                // Rotate remember token to invalidate "remember me"
+                $user->setRememberToken(Str::random(60));
+                $user->save();
+
+                // Purge sessions only when using database driver
+                if (config('session.driver') === 'database') {
+                    DB::table(config('session.table', 'sessions'))
+                        ->where('user_id', $user->id)
+                        ->delete();
+
+                    \Log::info('Database sessions purged for user_id: ' . $user->id);
+                } else {
+                    \Log::info('Session driver is not database; sessions will be dropped on next request by middleware.');
+                }
+            }
 
             \Log::info('User data AFTER update from database:', $user->toArray());
 
             \Log::info('Specific fields after update:', [
                 'verification_status' => $user->verification_status,
-                'active_status' => $user->active_status,
-                'role' => $user->role,
-                'points' => $user->points,
-                'address' => $user->address,
+                'active_status'       => $user->active_status,
+                'role'                => $user->role,
+                'points'              => $user->points,
+                'address'             => $user->address,
             ]);
 
             return redirect()->back()->with('success', 'User updated successfully.');
-
         } catch (ValidationException $e) {
             \Log::warning('Validation failed during user update:', $e->errors());
-            return redirect()->back()
+
+            return redirect()
+                ->back()
                 ->withErrors($e->errors())
                 ->withInput($request->all());
         } catch (\Exception $e) {
@@ -175,12 +211,16 @@ class UserController extends Controller
                 \Log::error('SQL Error: ' . $e->getSql());
             }
 
-            return redirect()->back()
+            return redirect()
+                ->back()
                 ->with('error', 'Failed to update user: ' . $e->getMessage())
                 ->withInput($request->all());
         }
     }
 
+    /**
+     * Delete a user.
+     */
     public function destroy(User $user)
     {
         try {
@@ -193,19 +233,17 @@ class UserController extends Controller
             return redirect()->back()->with('success', 'User deleted successfully.');
         } catch (\Exception $e) {
             \Log::error('Error deleting user: ' . $e->getMessage());
+
             return redirect()->back()->with('error', 'Failed to delete user: ' . $e->getMessage());
         }
     }
 
     /**
-     * Assign Free Registration Points to a user.
-     * Supports both:
-     *  - POST /users/{user}/assign-points
-     *  - PATCH /users/{user}/points (named 'points.update')
+     * Assign / adjust Free Registration Points.
      *
-     * Request payload:
-     *  - points: integer (required)
-     *  - mode: 'set' | 'add' | 'sub' (optional; default 'set')
+     * Request:
+     *  - points: int (required)
+     *  - mode: 'set' | 'add' | 'sub' | 'increment' | 'decrement' (default: 'set')
      */
     public function assignFreePoints(Request $request, User $user)
     {
@@ -215,9 +253,9 @@ class UserController extends Controller
                 'mode'   => 'nullable|string|in:set,add,sub,increment,decrement',
             ]);
 
-            $mode = $validated['mode'] ?? 'set';
+            $mode   = $validated['mode'] ?? 'set';
             $before = (int) $user->points;
-            $delta = (int) $validated['points'];
+            $delta  = (int) $validated['points'];
 
             switch ($mode) {
                 case 'add':
@@ -240,20 +278,23 @@ class UserController extends Controller
 
             \Log::info('Free Registration Points updated', [
                 'user_id' => $user->id,
-                'mode' => $mode,
-                'before' => $before,
-                'delta' => $delta,
-                'after' => $user->points,
+                'mode'    => $mode,
+                'before'  => $before,
+                'delta'   => $delta,
+                'after'   => $user->points,
             ]);
 
             return redirect()->back()->with('success', 'Free Registration Points updated successfully.');
         } catch (ValidationException $e) {
             \Log::warning('Validation failed during points assignment:', $e->errors());
-            return redirect()->back()
+
+            return redirect()
+                ->back()
                 ->withErrors($e->errors())
                 ->withInput($request->all());
         } catch (\Exception $e) {
             \Log::error('Error assigning free points: ' . $e->getMessage());
+
             return redirect()->back()->with('error', 'Failed to assign free points.');
         }
     }

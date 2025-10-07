@@ -25,13 +25,21 @@ export default function Navigation() {
     <nav className="bg-[#003153] shadow-md backdrop-blur-md fixed top-0 left-0 right-0 z-50">
       {/* Desktop */}
       <div className="hidden md:flex h-12 px-4 items-center justify-between text-sm text-white">
-        <div className="flex items-center gap-3 pr-4 border-r-2 border-white/20">
-          <img src="/Images/logo.png" alt="Logo" className="h-7" />
+        {/* LEFT cluster: logo + Mind Imagination | Game Assets - Store */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-3 pr-2 mr-2 border-r border-white/20">
+            <img src="/Images/logo.png" alt="Logo" className="h-7 shrink-0" />
+            <span className="font-semibold tracking-widest text-sm whitespace-nowrap">
+              MIND IMAGINATION
+            </span>
+          </div>
+          {/* Dikit sa linya */}
           <span className="font-semibold tracking-widest text-sm whitespace-nowrap">
             GAME ASSETS - STORE
           </span>
         </div>
 
+        {/* RIGHT: nav links */}
         <ul className="flex items-center gap-0 divide-x divide-white/20">
           {navLinks.map(({ label, href }) => (
             <li key={label}>
@@ -43,7 +51,6 @@ export default function Navigation() {
               </Link>
             </li>
           ))}
-
           <AuthSection desktop />
         </ul>
       </div>
@@ -80,7 +87,6 @@ export default function Navigation() {
                   </Link>
                 </li>
               ))}
-
               <AuthSection mobile closeMenu={() => setIsMenuOpen(false)} />
             </ul>
           </div>

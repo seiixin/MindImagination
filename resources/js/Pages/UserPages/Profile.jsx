@@ -1,54 +1,56 @@
+// resources/js/Pages/UserPages/Profile.jsx
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, useForm, usePage, router } from '@inertiajs/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function Profile() {
-  const { auth } = usePage().props;
+  const { auth, flash } = usePage().props;
+
+  // Toggles
   const [editingInfo, setEditingInfo] = useState(false);
   const [editingPassword, setEditingPassword] = useState(false);
 
-  const { data, setData, patch, processing, errors, reset } = useForm({
-    name: '',
-    email: '',
-    password: '',
-    password_confirmation: '',
+  // ---------------- Profile Info Form ----------------
+  const infoForm = useForm({
+    name: auth?.user?.name ?? '',
+    email: auth?.user?.email ?? '',
+    mobile_number: auth?.user?.mobile_number ?? '',
   });
 
-  const handleInfoEdit = () => {
-    setEditingInfo(true);
-    setData({
-      name: auth.user.name || '',
-      email: auth.user.email || '',
-    });
-  };
-
-  const handlePasswordEdit = () => {
-    setEditingPassword(true);
-    setData({
-      password: '',
-      password_confirmation: '',
-    });
-  };
+  const handleInfoEdit = () => setEditingInfo(true);
 
   const handleInfoUpdate = (e) => {
     e.preventDefault();
-    patch(route('profile.update'), {
+    infoForm.patch(route('profile.update'), {
       preserveScroll: true,
       onSuccess: () => setEditingInfo(false),
     });
   };
 
+  // ---------------- Password Form ----------------
+  const passForm = useForm({
+    current_password: '',
+    password: '',
+    password_confirmation: '',
+  });
+
+  const handlePasswordEdit = () => {
+    setEditingPassword(true);
+    passForm.reset();
+  };
+
   const handlePasswordUpdate = (e) => {
     e.preventDefault();
-    patch(route('profile.password'), {
+    passForm.patch(route('profile.password'), {
       preserveScroll: true,
       onSuccess: () => {
         setEditingPassword(false);
-        reset('password', 'password_confirmation');
+        passForm.reset();
       },
     });
   };
 
+  // ---------------- Deactivate ----------------
   const handleDeactivate = (e) => {
     e.preventDefault();
     if (confirm('Are you sure you want to deactivate your account?')) {
@@ -56,12 +58,35 @@ export default function Profile() {
     }
   };
 
+  // Highlight password-updated flash
+  const [statusMsg, setStatusMsg] = useState('');
+  useEffect(() => {
+    if (flash?.status === 'password-updated') {
+      setStatusMsg('Password updated successfully.');
+      const t = setTimeout(() => setStatusMsg(''), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [flash?.status]);
+
   return (
     <AuthenticatedLayout>
       <Head title="Profile" />
 
       <div className="min-h-screen flex items-start justify-center px-4 py-8">
         <div className="w-full max-w-xl bg-[#001f35]/60 text-white rounded-lg shadow-md p-6 space-y-8">
+
+          {/* Flash / Status */}
+          {statusMsg && (
+            <div className="rounded bg-emerald-600/20 border border-emerald-400/50 px-3 py-2 text-sm text-emerald-100">
+              {statusMsg}
+            </div>
+          )}
+          {flash?.success && (
+            <div className="rounded bg-emerald-600/20 border border-emerald-400/50 px-3 py-2 text-sm text-emerald-100">
+              {flash.success}
+            </div>
+          )}
+
           {/* Info Section */}
           <section className="space-y-4">
             <h2 className="text-lg font-bold border-b border-white/20 pb-2">Profile Information</h2>
@@ -70,6 +95,9 @@ export default function Profile() {
               <div className="space-y-2">
                 <p><strong>Name:</strong> {auth.user.name}</p>
                 <p><strong>Email:</strong> {auth.user.email}</p>
+                {auth.user.mobile_number && (
+                  <p><strong>Mobile:</strong> {auth.user.mobile_number}</p>
+                )}
                 <button
                   onClick={handleInfoEdit}
                   className="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-2 px-4 rounded"
@@ -83,36 +111,56 @@ export default function Profile() {
                   <label className="block text-sm mb-1">Name</label>
                   <input
                     type="text"
-                    value={data.name}
-                    onChange={(e) => setData('name', e.target.value)}
+                    value={infoForm.data.name}
+                    onChange={(e) => infoForm.setData('name', e.target.value)}
                     className="w-full rounded px-3 py-2 text-black"
                   />
-                  {errors.name && <p className="text-red-400 text-sm">{errors.name}</p>}
+                  {infoForm.errors.name && <p className="text-red-400 text-sm">{infoForm.errors.name}</p>}
                 </div>
+
                 <div>
                   <label className="block text-sm mb-1">Email</label>
                   <input
                     type="email"
-                    value={data.email}
-                    onChange={(e) => setData('email', e.target.value)}
+                    value={infoForm.data.email}
+                    onChange={(e) => infoForm.setData('email', e.target.value)}
                     className="w-full rounded px-3 py-2 text-black"
                   />
-                  {errors.email && <p className="text-red-400 text-sm">{errors.email}</p>}
+                  {infoForm.errors.email && <p className="text-red-400 text-sm">{infoForm.errors.email}</p>}
                 </div>
+
+                <div>
+                  <label className="block text-sm mb-1">Mobile Number (optional)</label>
+                  <input
+                    type="text"
+                    value={infoForm.data.mobile_number}
+                    onChange={(e) => infoForm.setData('mobile_number', e.target.value)}
+                    className="w-full rounded px-3 py-2 text-black"
+                  />
+                  {infoForm.errors.mobile_number && (
+                    <p className="text-red-400 text-sm">{infoForm.errors.mobile_number}</p>
+                  )}
+                </div>
+
                 <div className="flex justify-between gap-2">
                   <button
                     type="submit"
                     className="flex-1 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold py-2 rounded"
-                    disabled={processing}
+                    disabled={infoForm.processing}
                   >
-                    Save Changes
+                    {infoForm.processing ? 'Saving…' : 'Save Changes'}
                   </button>
                   <button
                     type="button"
                     className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 rounded"
                     onClick={() => {
                       setEditingInfo(false);
-                      reset('name', 'email');
+                      infoForm.reset();
+                      infoForm.setData({
+                        name: auth?.user?.name ?? '',
+                        email: auth?.user?.email ?? '',
+                        mobile_number: auth?.user?.mobile_number ?? '',
+                      });
                     }}
                   >
                     Cancel
@@ -136,38 +184,53 @@ export default function Profile() {
             ) : (
               <form onSubmit={handlePasswordUpdate} className="space-y-4">
                 <div>
+                  <label className="block text-sm mb-1">Current Password</label>
+                  <input
+                    type="password"
+                    value={passForm.data.current_password}
+                    onChange={(e) => passForm.setData('current_password', e.target.value)}
+                    className="w-full rounded px-3 py-2 text-black"
+                  />
+                  {passForm.errors.current_password && (
+                    <p className="text-red-400 text-sm">{passForm.errors.current_password}</p>
+                  )}
+                </div>
+
+                <div>
                   <label className="block text-sm mb-1">New Password</label>
                   <input
                     type="password"
-                    value={data.password}
-                    onChange={(e) => setData('password', e.target.value)}
+                    value={passForm.data.password}
+                    onChange={(e) => passForm.setData('password', e.target.value)}
                     className="w-full rounded px-3 py-2 text-black"
                   />
-                  {errors.password && <p className="text-red-400 text-sm">{errors.password}</p>}
+                  {passForm.errors.password && <p className="text-red-400 text-sm">{passForm.errors.password}</p>}
                 </div>
+
                 <div>
                   <label className="block text-sm mb-1">Confirm Password</label>
                   <input
                     type="password"
-                    value={data.password_confirmation}
-                    onChange={(e) => setData('password_confirmation', e.target.value)}
+                    value={passForm.data.password_confirmation}
+                    onChange={(e) => passForm.setData('password_confirmation', e.target.value)}
                     className="w-full rounded px-3 py-2 text-black"
                   />
                 </div>
+
                 <div className="flex justify-between gap-2">
                   <button
                     type="submit"
                     className="flex-1 bg-amber-400 hover:bg-amber-300 text-black font-semibold py-2 rounded"
-                    disabled={processing}
+                    disabled={passForm.processing}
                   >
-                    Update Password
+                    {passForm.processing ? 'Updating…' : 'Update Password'}
                   </button>
                   <button
                     type="button"
                     className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 rounded"
                     onClick={() => {
                       setEditingPassword(false);
-                      reset('password', 'password_confirmation');
+                      passForm.reset();
                     }}
                   >
                     Cancel
@@ -186,7 +249,7 @@ export default function Profile() {
             <button
               onClick={handleDeactivate}
               className="w-full bg-red-600 hover:bg-red-500 text-white font-semibold py-2 rounded"
-              disabled={processing}
+              disabled={infoForm.processing || passForm.processing}
             >
               Deactivate Account
             </button>

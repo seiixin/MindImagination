@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
@@ -56,6 +55,9 @@ class ChatController extends Controller
                     'sender_type' => $message->sender_type,
                     'sender_name' => $message->sender->name,
                     'attachment_path' => $message->attachment_path,
+                    'attachment_url' => $message->attachment_path
+                        ? Storage::disk('public')->url($message->attachment_path)
+                        : null,
                     'created_at' => $message->created_at->format('h:i A'),
                     'full_date' => $message->created_at->format('M d, Y h:i A'),
                     'is_read' => $message->is_read,
@@ -112,6 +114,9 @@ class ChatController extends Controller
             'sender_type' => $message->sender_type,
             'sender_name' => Auth::user()->name,
             'attachment_path' => $message->attachment_path,
+            'attachment_url' => $message->attachment_path
+                ? Storage::disk('public')->url($message->attachment_path)
+                : null,
             'created_at' => $message->created_at->format('h:i A'),
             'full_date' => $message->created_at->format('M d, Y h:i A'),
         ]);
@@ -168,7 +173,7 @@ class ChatController extends Controller
             'open_conversations' => ChatConversation::where('status', 'open')->count(),
             'resolved_today' => ChatConversation::where('status', 'resolved')
                 ->whereDate('updated_at', today())->count(),
-            'average_response_time' => '2.5 hours', // This would need more complex calculation
+            'average_response_time' => '2.5 hours', // placeholder
         ];
 
         return response()->json($stats);
