@@ -9,6 +9,10 @@ class Asset extends Model
 {
     use HasFactory;
 
+    /* ----------------------------------------------------------------------
+     | Mass Assignment / Casts
+     * ---------------------------------------------------------------------- */
+
     protected $fillable = [
         'user_id',
         'category_id',
@@ -30,8 +34,14 @@ class Asset extends Model
         'maintenance_cost' => 'decimal:2',
         'points'           => 'integer',
         'sub_image_path'   => 'array',
+        'is_featured'      => 'boolean',
     ];
 
+    /* ----------------------------------------------------------------------
+     | Relationships
+     * ---------------------------------------------------------------------- */
+
+    /** Catalog creator/owner (not the same as buyers) */
     public function user()
     {
         return $this->belongsTo(User::class);
@@ -42,7 +52,25 @@ class Asset extends Model
         return $this->belongsTo(StoreCategory::class, 'category_id');
     }
 
-    /** user interactions */
+    /** Purchases linking users who own this asset (manual or checkout) */
+    public function purchases()
+    {
+        return $this->hasMany(Purchase::class);
+    }
+
+    /**
+     * Users who currently own this asset (completed + not revoked).
+     * Useful for admin stats or entitlement checks.
+     */
+    public function owners()
+    {
+        return $this->belongsToMany(User::class, 'purchases')
+            ->withPivot(['status', 'source', 'revoked_at'])
+            ->wherePivot('status', Purchase::STATUS_COMPLETED)
+            ->wherePivotNull('revoked_at');
+    }
+
+    /** ----------------------- User interactions ----------------------- */
     public function comments()
     {
         return $this->hasMany(AssetComment::class);
@@ -63,7 +91,40 @@ class Asset extends Model
         return $this->hasMany(AssetFavorite::class);
     }
 
-    // Optional helpers
+    /* ----------------------------------------------------------------------
+     | Scopes
+     * ---------------------------------------------------------------------- */
+
+    /**
+     * Assets owned by a specific user (completed + not revoked).
+     * Example: Asset::ownedBy($userId)->get();
+     */
+    public function scopeOwnedBy($query, int $userId)
+    {
+        return $query->whereHas('purchases', function ($q) use ($userId) {
+            $q->where('user_id', $userId)
+              ->where('status', Purchase::STATUS_COMPLETED)
+              ->whereNull('revoked_at');
+        });
+    }
+
+    /* ----------------------------------------------------------------------
+     | Accessors / Helpers
+     * ---------------------------------------------------------------------- */
+
+    /** Prefer cover image; fallback to main file path */
+    public function getImageUrlAttribute(): ?string
+    {
+        return $this->cover_image_path ?: $this->file_path;
+    }
+
+    /** Treat as premium if it costs either money or points */
+    public function getIsPremiumAttribute(): bool
+    {
+        return (float) $this->price > 0 || (int) $this->points > 0;
+    }
+
+    // Optional helpers you already had
     public function averageRating()
     {
         return $this->ratings()->avg('rating');

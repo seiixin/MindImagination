@@ -8,6 +8,7 @@ use Inertia\Inertia;
 // Models
 use App\Models\Slide;
 use App\Models\Asset;
+use App\Models\Purchase;
 
 // Controllers
 use App\Http\Controllers\DashboardController;
@@ -19,11 +20,11 @@ use App\Http\Controllers\Admin\PolicyController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
-use App\Http\Controllers\Auth\NewPasswordController;            // ← Breeze/Jetstream
+use App\Http\Controllers\Auth\NewPasswordController; // Breeze/Jetstream
 use App\Http\Controllers\Admin\ContactSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\StoreCategoryController;
-use App\Http\Controllers\Admin\AssetController;                  // also used for guest details
+use App\Http\Controllers\Admin\AssetController; // also used for guest details
 use App\Http\Controllers\Admin\ChatController;
 use App\Http\Controllers\Admin\LogsController;
 use App\Http\Controllers\Admin\BackupController;
@@ -31,6 +32,8 @@ use App\Http\Controllers\Admin\StorePointsController;
 use App\Http\Controllers\AssetInteractionController;
 use App\Http\Controllers\Admin\StorePlanController;
 use App\Http\Controllers\ChatSupportController;
+use App\Http\Controllers\Admin\UserOwnedAssetController;
+
 /*
 |--------------------------------------------------------------------------
 | Public (Guest)
@@ -43,26 +46,57 @@ Route::get('/', function () {
         ->when(Schema::hasColumn('slides', 'sort_order'), fn ($q) => $q->orderBy('sort_order'))
         ->get(['id', 'image_path', 'details']);
 
-    $assetFields = ['id','title','cover_image_path','file_path','points','price'];
-    if (Schema::hasColumn('assets','slug')) $assetFields[] = 'slug';
+    // Build a safe column list based on existing schema
+    $assetFields = array_values(array_filter([
+        'id',
+        'title',
+        Schema::hasColumn('assets', 'cover_image_path') ? 'cover_image_path' : null,
+        'file_path',
+        'points',
+        'price',
+        Schema::hasColumn('assets', 'slug') ? 'slug' : null,
+    ]));
 
-    $assets = Asset::query()
+    $assetsCollection = Asset::query()
         ->when(Schema::hasColumn('assets', 'is_published'), fn ($q) => $q->where('is_published', 1))
         ->latest('id')
         ->limit(24)
-        ->get($assetFields)
-        ->map(function ($a) {
-            return [
-                'id'        => $a->id,
-                'title'     => $a->title,
-                'slug'      => (Schema::hasColumn('assets','slug') && !empty($a->slug))
-                                ? $a->slug
-                                : Str::slug($a->title ?? (string)$a->id),
-                'image_url' => $a->cover_image_path ?: $a->file_path,
-                'points'    => $a->points,
-                'price'     => $a->price,
-            ];
-        });
+        ->get($assetFields);
+
+    // Add "owned" flag for signed-in users (status must be 'completed'; handle optional revoked_at)
+    $ownedIds = [];
+    if (auth()->check()) {
+        $statusCompleted = defined(Purchase::class . '::STATUS_COMPLETED') ? Purchase::STATUS_COMPLETED : 'completed';
+
+        $ownedQuery = Purchase::where('user_id', auth()->id())
+            ->where('status', $statusCompleted);
+
+        if (Schema::hasColumn('purchases', 'revoked_at')) {
+            $ownedQuery->whereNull('revoked_at');
+        }
+
+        $ownedIds = $ownedQuery->pluck('asset_id')->all();
+    }
+
+    $assets = $assetsCollection->map(function ($a) use ($ownedIds) {
+        $slug = Schema::hasColumn('assets', 'slug') && !empty($a->slug)
+            ? $a->slug
+            : Str::slug($a->title ?? (string) $a->id);
+
+        $imageUrl = (Schema::hasColumn('assets', 'cover_image_path') && !empty($a->cover_image_path))
+            ? $a->cover_image_path
+            : $a->file_path;
+
+        return [
+            'id'        => $a->id,
+            'title'     => $a->title,
+            'slug'      => $slug,
+            'image_url' => $imageUrl,
+            'points'    => $a->points,
+            'price'     => $a->price,
+            'owned'     => in_array($a->id, $ownedIds, true),
+        ];
+    });
 
     return Inertia::render('GuestPages/Store', [
         'slides' => $slides,
@@ -112,17 +146,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // Chat Support
     Route::prefix('chat')->name('chat.')->group(function () {
-    Route::get   ('/conversations',                    [ChatSupportController::class, 'index'])->name('conversations.index');
-    Route::post  ('/conversations',                    [ChatSupportController::class, 'store'])->name('conversations.store');
-    Route::get   ('/conversations/{conversation}',     [ChatSupportController::class, 'show'])->name('conversations.show');
-    Route::post  ('/conversations/{conversation}/messages', [ChatSupportController::class, 'sendMessage'])->name('messages.store');
-    Route::put   ('/conversations/{conversation}/status',    [ChatSupportController::class, 'updateStatus'])->name('conversations.status');
-    // optional delete of a user-owned message
-    Route::delete('/messages/{message}', [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
+        Route::get   ('/conversations',                         [ChatSupportController::class, 'index'])->name('conversations.index');
+        Route::post  ('/conversations',                         [ChatSupportController::class, 'store'])->name('conversations.store');
+        Route::get   ('/conversations/{conversation}',          [ChatSupportController::class, 'show'])->name('conversations.show');
+        Route::post  ('/conversations/{conversation}/messages', [ChatSupportController::class, 'sendMessage'])->name('messages.store');
+        Route::put   ('/conversations/{conversation}/status',   [ChatSupportController::class, 'updateStatus'])->name('conversations.status');
+        Route::delete('/messages/{message}',                    [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
     });
 
-        // Purchase Plans
-
+    // Purchase Plans
     Route::get ('/buy-points',       [PurchaseController::class, 'index'])->name('buy-points');
     Route::post('/paymongo/source',  [PurchaseController::class, 'createSource'])->name('paymongo.source');
     Route::post('/paymongo/payment', [PurchaseController::class, 'createPayment'])->name('paymongo.payment');
@@ -134,24 +166,20 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::prefix('assets/{asset}')
         ->controller(AssetInteractionController::class)
         ->group(function () {
-            // comments
             Route::get   ('/comments',         'commentsIndex')->name('assets.comments.index');
             Route::post  ('/comments',         'commentsStore')->name('assets.comments.store');
             Route::put   ('/comments/{id}',    'commentsUpdate')->name('assets.comments.update');
             Route::delete('/comments/{id}',    'commentsDestroy')->name('assets.comments.destroy');
 
-            // ratings
             Route::get   ('/ratings',          'ratingsIndex')->name('assets.ratings.index');
             Route::post  ('/ratings',          'ratingsStore')->name('assets.ratings.store');
             Route::put   ('/ratings/{id}',     'ratingsUpdate')->name('assets.ratings.update');
             Route::delete('/ratings/{id}',     'ratingsDestroy')->name('assets.ratings.destroy');
 
-            // favorites
             Route::get   ('/favorites',        'favoritesIndex')->name('assets.favorites.index');
             Route::post  ('/favorites',        'favoritesStore')->name('assets.favorites.store');
             Route::delete('/favorites/{id}',   'favoritesDestroy')->name('assets.favorites.destroy');
 
-            // views
             Route::get   ('/views',            'viewsIndex')->name('assets.views.index');
             Route::post  ('/views',            'viewsStore')->name('assets.views.store');
         });
@@ -171,7 +199,13 @@ Route::middleware(['auth', 'verified', 'is_admin'])
         Route::get('/slides', fn () => Inertia::render('AdminPages/FrontPageSlides'))->name('slides');
         Route::get('/privacy', fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
         Route::get('/contact', fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
-        Route::get('/users', fn () => Inertia::render('AdminPages/Users'))->name('users');
+
+        // ✅ Users page — only controller route (no duplicate closure)
+        Route::get('/users', [UserController::class, 'index'])->name('users');
+        Route::post('/users', [UserController::class, 'store']);
+        Route::put('/users/{user}', [UserController::class, 'update']);
+        Route::delete('/users/{user}', [UserController::class, 'destroy']);
+
         Route::get('/store-points', fn () => Inertia::render('AdminPages/StorePoints'))->name('store-points');
         Route::get('/store-category', fn () => Inertia::render('AdminPages/StoreCategory'))->name('store-category');
         Route::get('/chat', fn () => Inertia::render('AdminPages/ChatSupport'))->name('chat');
@@ -192,11 +226,6 @@ Route::middleware(['auth', 'verified', 'is_admin'])
 
         Route::get('/contact-setting', [ContactSettingController::class, 'show']);
         Route::put('/contact-setting', [ContactSettingController::class, 'update']);
-
-        Route::get('/users', [UserController::class, 'index'])->name('users');
-        Route::post('/users', [UserController::class, 'store']);
-        Route::put('/users/{user}', [UserController::class, 'update']);
-        Route::delete('/users/{user}', [UserController::class, 'destroy']);
 
         Route::resource('/store-categories', StoreCategoryController::class);
         Route::resource('/assets', AssetController::class);
@@ -235,4 +264,16 @@ Route::middleware(['auth', 'verified', 'is_admin'])
         Route::post('/store-plans',       [StorePlanController::class, 'store']);
         Route::put('/store-plans/{id}',   [StorePlanController::class, 'update']);
         Route::delete('/store-plans/{id}',[StorePlanController::class, 'destroy']);
+
+        // Asset Ownership (used by Users admin page)
+        Route::get('/users/{user}/owned-assets', [UserOwnedAssetController::class, 'index'])
+            ->name('users.owned-assets.index');
+        Route::post('/users/{user}/owned-assets', [UserOwnedAssetController::class, 'store'])
+            ->name('users.owned-assets.store');
+        Route::patch('/owned-assets/{purchase}', [UserOwnedAssetController::class, 'update'])
+            ->name('owned-assets.update');
+        Route::delete('/owned-assets/{purchase}', [UserOwnedAssetController::class, 'destroy'])
+            ->name('owned-assets.destroy');
+        Route::get('/assets-light', [UserOwnedAssetController::class, 'assetsLight'])
+            ->name('assets.light');
     });
