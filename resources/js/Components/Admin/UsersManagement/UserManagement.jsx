@@ -1,40 +1,91 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import { router } from '@inertiajs/react';
+import Swal from 'sweetalert2';
+import 'sweetalert2/dist/sweetalert2.css';
 
-/** -------------------------------------------------------------
+/* -------------------------------------------------------------
  * Small helpers
  * ------------------------------------------------------------ */
 const ADMIN = '/admin';
 
+/** Axios instance for JSON API (includes AJAX + CSRF headers). */
+const api = axios.create({
+  baseURL: ADMIN,
+  withCredentials: true,
+  headers: {
+    Accept: 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Content-Type': 'application/json',
+  },
+  xsrfCookieName: 'XSRF-TOKEN',
+  xsrfHeaderName: 'X-XSRF-TOKEN',
+});
+
+/** Toast helper */
+const Toast = Swal.mixin({
+  toast: true,
+  position: 'top-end',
+  timer: 2200,
+  timerProgressBar: true,
+  showConfirmButton: false,
+});
+
 /** Build an absolute image URL (fixes 404 thumbnails). */
 function toImageUrl(path) {
   if (!path) return '';
-  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
-    return path;
-  }
-  // most Laravel uploads live under storage; strip optional "public/"
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) return path;
   return `/storage/${path.replace(/^public\//, '')}`;
 }
 
 /** GET JSON with cookies + AJAX headers (prevents 419 on GET). */
 async function apiGet(path, params = {}) {
-  const url = new URL(`${ADMIN}${path}`, window.location.origin);
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && `${v}` !== '') url.searchParams.set(k, v);
-  });
-  const res = await fetch(url.toString(), {
-    method: 'GET',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const res = await api.get(path, { params });
+  return res.data;
 }
 
-/** -------------------------------------------------------------
+/** Currency formatter (uses currency code if provided) */
+function fmtCurrency(amount, currency = 'PHP') {
+  const n = Number(amount ?? 0);
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency,
+      currencyDisplay: 'narrowSymbol',
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `${currency} ${n.toFixed(2)}`;
+  }
+}
+
+/** Extract human-friendly API error */
+function pickErrorMessage(e, fallback = 'Something went wrong.') {
+  const msg =
+    e?.response?.data?.message ||
+    e?.response?.data?.error ||
+    e?.message ||
+    fallback;
+  const bag = e?.response?.data?.errors;
+  if (bag && typeof bag === 'object') {
+    const first = Object.values(bag)?.[0];
+    if (Array.isArray(first) && first.length) return first[0];
+  }
+  return msg;
+}
+
+/** Blocking loader dialog */
+function showBlocking(title = 'Please wait…') {
+  Swal.fire({
+    title,
+    allowOutsideClick: false,
+    allowEscapeKey: false,
+    showConfirmButton: false,
+    didOpen: () => Swal.showLoading(),
+  });
+}
+
+/* -------------------------------------------------------------
  * MAIN COMPONENT
  * ------------------------------------------------------------ */
 export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoints = 100 }) {
@@ -57,6 +108,11 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
   const [userPointsDirty, setUserPointsDirty] = useState(false);
 
   const neuShadow = 'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
+
+  /** Prime Sanctum CSRF cookie once (needed for PATCH/POST/DELETE) */
+  useEffect(() => {
+    axios.get('/sanctum/csrf-cookie', { withCredentials: true }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (selectedUser) {
@@ -148,9 +204,13 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
     [user]
   );
 
+  /** Create/Update via Inertia (callbacks – not await) */
   const submitUser = (e) => {
     e.preventDefault();
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      Swal.fire({ icon: 'error', title: 'Fix validation errors', text: 'Please check the highlighted fields.' });
+      return;
+    }
 
     setIsSubmitting(true);
     if (selectedUser) {
@@ -158,23 +218,18 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
         preserveScroll: true,
         onSuccess: () => {
           setIsSubmitting(false);
+          Toast.fire({ icon: 'success', title: 'User updated' });
           onBack();
         },
         onError: (be) => {
           setIsSubmitting(false);
           const t = {};
-          Object.entries(be).forEach(([k, msgs]) => {
+          Object.entries(be || {}).forEach(([k, msgs]) => {
             const msg = Array.isArray(msgs) ? msgs[0] : msgs;
             t[k] = msg;
-            if (k === 'userName' && msg?.includes('already been taken')) {
-              t[k] = 'This username is already taken.';
-            } else if (k === 'emailAddress' && msg?.includes('already been taken')) {
-              t[k] = 'This email address is already registered.';
-            } else if (k === 'mobileNumber' && msg?.includes('already been taken')) {
-              t[k] = 'This mobile number is already registered.';
-            }
           });
           setErrors(t);
+          Swal.fire({ icon: 'error', title: 'Update failed', text: 'Please review the errors below.' });
         },
       });
     } else {
@@ -182,34 +237,48 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
         preserveScroll: true,
         onSuccess: () => {
           setIsSubmitting(false);
+          Toast.fire({ icon: 'success', title: 'User created' });
           onBack();
         },
         onError: (be) => {
           setIsSubmitting(false);
           const t = {};
-          Object.entries(be).forEach(([k, msgs]) => {
+          Object.entries(be || {}).forEach(([k, msgs]) => {
             const msg = Array.isArray(msgs) ? msgs[0] : msgs;
             t[k] = msg;
           });
           setErrors(t);
+          Swal.fire({ icon: 'error', title: 'Create failed', text: 'Please review the errors below.' });
         },
       });
     }
   };
 
-  const deleteUser = () => {
+  const deleteUser = async () => {
     if (!selectedUser) return;
-    if (!confirm('Delete this user?')) return;
+
+    const res = await Swal.fire({
+      icon: 'warning',
+      title: 'Delete this user?',
+      text: 'This action cannot be undone.',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, delete',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+    });
+    if (!res.isConfirmed) return;
+
     setIsSubmitting(true);
     router.delete(`${ADMIN}/users/${selectedUser.id}`, {
       preserveScroll: true,
       onSuccess: () => {
         setIsSubmitting(false);
+        Toast.fire({ icon: 'success', title: 'User deleted' });
         onBack();
       },
       onError: () => {
         setIsSubmitting(false);
-        alert('Failed to delete user.');
+        Swal.fire({ icon: 'error', title: 'Delete failed', text: 'Unable to delete user.' });
       },
     });
   };
@@ -223,7 +292,7 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
     if (!selectedUser?.id) return;
     setOwnedLoading(true);
     try {
-      const data = await apiGet(`/users/${selectedUser.id}/owned-assets`, {
+      const data = await apiGet(`users/${selectedUser.id}/owned-assets`, {
         page,
         per_page: ownedMeta.per_page || 15,
         q,
@@ -236,8 +305,7 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
         per_page: data.pagination?.per_page ?? 15,
       });
     } catch (e) {
-      console.error(e);
-      alert('Failed to load owned assets.');
+      Swal.fire({ icon: 'error', title: 'Load failed', text: pickErrorMessage(e, 'Failed to load owned assets.') });
     } finally {
       setOwnedLoading(false);
     }
@@ -245,15 +313,65 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
 
   useEffect(() => {
     if (selectedUser) fetchOwnedAssets(1, '');
-  }, [selectedUser?.id]); // eslint-disable-line
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedUser?.id]);
 
+  /** Revoke with SweetAlert2 flow + safe fallback (PATCH -> DELETE ?mode=revoke) */
   const revokeOwnership = async (purchaseId) => {
-    if (!confirm('Revoke this asset from the user?')) return;
-    router.delete(`${ADMIN}/owned-assets/${purchaseId}`, {
-      preserveScroll: true,
-      onSuccess: () => fetchOwnedAssets(ownedMeta.page),
-      onError: () => alert('Failed to revoke ownership.'),
+    const step1 = await Swal.fire({
+      icon: 'warning',
+      title: 'Revoke this ownership?',
+      text: 'The user will lose access to this asset.',
+      showCancelButton: true,
+      confirmButtonText: 'Revoke',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
     });
+    if (!step1.isConfirmed) return;
+
+    const step2 = await Swal.fire({
+      icon: 'question',
+      title: 'Refund points to this user?',
+      text: 'You can refund the original points spent.',
+      showDenyButton: true,
+      showCancelButton: true,
+      confirmButtonText: 'Refund points',
+      denyButtonText: 'Don’t refund',
+      cancelButtonText: 'Cancel',
+    });
+    if (step2.isDismissed) return;
+
+    const refund = step2.isConfirmed;
+
+    try {
+      showBlocking('Revoking…');
+      // Preferred path
+      await api.patch(`owned-assets/${purchaseId}`, {
+        action: 'revoke',
+        refund_points: refund,
+      });
+      Swal.close();
+      await fetchOwnedAssets(ownedMeta.page);
+      Toast.fire({ icon: 'success', title: refund ? 'Revoked + points refunded' : 'Ownership revoked' });
+    } catch (e1) {
+      // Fallback (explicit mode=revoke, with JSON body)
+      try {
+        await api.delete(`owned-assets/${purchaseId}`, {
+          params: { mode: 'revoke' },
+          data: { refund_points: refund },
+        });
+        Swal.close();
+        await fetchOwnedAssets(ownedMeta.page);
+        Toast.fire({ icon: 'success', title: refund ? 'Revoked + points refunded' : 'Ownership revoked' });
+      } catch (e2) {
+        Swal.close();
+        Swal.fire({
+          icon: 'error',
+          title: 'Failed to update ownership',
+          text: pickErrorMessage(e2, pickErrorMessage(e1, 'Failed to update ownership.')),
+        });
+      }
+    }
   };
 
   /* =================== Asset picker modal =================== */
@@ -268,7 +386,7 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
   const fetchPicker = async (page = 1, q = '') => {
     setPickerLoading(true);
     try {
-      const data = await apiGet('/assets-light', { page, per_page: 12, q });
+      const data = await apiGet('assets-light', { page, per_page: 12, q });
       setPickerItems((data.data || []).map((a) => ({ ...a, image_url: toImageUrl(a.image_url) })));
       setPickerMeta({
         page: data.pagination?.current_page ?? 1,
@@ -276,8 +394,7 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
       });
       setPickerPage(page);
     } catch (e) {
-      console.error(e);
-      alert('Failed to load assets.');
+      Swal.fire({ icon: 'error', title: 'Load failed', text: pickErrorMessage(e, 'Failed to load assets.') });
     } finally {
       setPickerLoading(false);
     }
@@ -288,25 +405,40 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
     fetchPicker(1, '');
   };
 
+  /** Assign (POST /admin/users/{user}/owned-assets) */
   const assignAsset = async (assetId) => {
     if (!selectedUser?.id) return;
+
+    const res = await Swal.fire({
+      icon: 'question',
+      title: 'Allow overdraft if user points are insufficient?',
+      text: 'You can allow points to go negative for this grant.',
+      showDenyButton: true,
+      showCancelButton: true,
+      confirmButtonText: 'Allow overdraft',
+      denyButtonText: "Don't allow",
+      cancelButtonText: 'Cancel',
+    });
+    if (res.isDismissed) return;
+
+    const overdraft = res.isConfirmed;
+
     setAssigning(assetId);
-    router.post(
-      `${ADMIN}/users/${selectedUser.id}/owned-assets`,
-      { asset_id: assetId },
-      {
-        preserveScroll: true,
-        onSuccess: () => {
-          setAssigning(null);
-          fetchOwnedAssets(ownedMeta.page);
-          alert('Asset assigned.');
-        },
-        onError: () => {
-          setAssigning(null);
-          alert('Failed to assign asset.');
-        },
-      }
-    );
+    try {
+      showBlocking('Assigning…');
+      await api.post(`users/${selectedUser.id}/owned-assets`, {
+        asset_id: assetId,
+        allow_overdraft: overdraft,
+      });
+      setAssigning(null);
+      Swal.close();
+      await fetchOwnedAssets(ownedMeta.page);
+      Toast.fire({ icon: 'success', title: 'Asset assigned' });
+    } catch (e) {
+      setAssigning(null);
+      Swal.close();
+      Swal.fire({ icon: 'error', title: 'Assign failed', text: pickErrorMessage(e, 'Failed to assign asset.') });
+    }
   };
 
   /* =================== Render =================== */
@@ -457,8 +589,8 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
               <thead className="text-left">
                 <tr>
                   <th className="py-2 pr-4">Item</th>
-                  <th className="py-2 pr-4">Points</th>
-                  <th className="py-2 pr-4">Price</th>
+                  <th className="py-2 pr-4">Points Spent</th>
+                  <th className="py-2 pr-4">Cost</th>
                   <th className="py-2 pr-4">Granted At</th>
                   <th className="py-2">Action</th>
                 </tr>
@@ -470,27 +602,32 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
                 {!ownedLoading && owned.length === 0 && (
                   <tr><td colSpan="5" className="py-4 text-center">No owned items.</td></tr>
                 )}
-                {!ownedLoading && owned.map((row) => (
-                  <tr key={row.purchase_id} className="border-t">
-                    <td className="py-2 pr-4">
-                      <div className="flex items-center gap-2">
-                        <img src={toImageUrl(row.asset?.image_url)} alt="" className="w-8 h-8 object-cover rounded" />
-                        <span>{row.asset?.title}</span>
-                      </div>
-                    </td>
-                    <td className="py-2 pr-4">{row.asset?.points ?? '-'}</td>
-                    <td className="py-2 pr-4">{row.asset?.price ?? '-'}</td>
-                    <td className="py-2 pr-4">{row.granted_at ?? '-'}</td>
-                    <td className="py-2">
-                      <button
-                        onClick={() => revokeOwnership(row.purchase_id)}
-                        className="px-3 py-1 rounded bg-red-500 text-white hover:bg-red-600"
-                      >
-                        Revoke
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {!ownedLoading && owned.map((row) => {
+                  const pointsSpent = row.points_spent ?? row.asset?.points ?? '-';
+                  const costAmount  = row.cost_amount ?? row.asset?.price ?? 0;
+                  const currency    = row.currency || 'PHP';
+                  return (
+                    <tr key={row.purchase_id} className="border-t">
+                      <td className="py-2 pr-4">
+                        <div className="flex items-center gap-2">
+                          <img src={toImageUrl(row.asset?.image_url)} alt="" className="w-8 h-8 object-cover rounded" />
+                          <span>{row.asset?.title}</span>
+                        </div>
+                      </td>
+                      <td className="py-2 pr-4">{pointsSpent}</td>
+                      <td className="py-2 pr-4">{fmtCurrency(costAmount, currency)}</td>
+                      <td className="py-2 pr-4">{row.granted_at ?? '-'}</td>
+                      <td className="py-2">
+                        <button
+                          onClick={() => revokeOwnership(row.purchase_id)}
+                          className="px-3 py-1 rounded bg-red-500 text-white hover:bg-red-600"
+                        >
+                          Revoke
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 

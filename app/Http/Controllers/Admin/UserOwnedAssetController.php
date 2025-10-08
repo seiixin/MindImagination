@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Asset;
 use App\Models\Purchase;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -14,12 +15,7 @@ use Illuminate\Support\Facades\Schema;
 
 class UserOwnedAssetController extends Controller
 {
-    // No extra middleware guard here; your routes handle admin access.
-
-    /**
-     * List a user’s owned assets (status = completed).
-     * GET /admin/users/{user}/owned-assets?q=&per_page=&page=
-     */
+    /** LIST: GET /admin/users/{user}/owned-assets */
     public function index(Request $request, User $user)
     {
         $q       = trim((string) $request->query('q', ''));
@@ -30,7 +26,7 @@ class UserOwnedAssetController extends Controller
         $query = Purchase::query()
             ->with(['asset:' . implode(',', $assetCols)])
             ->where('user_id', $user->id)
-            ->where('status', 'completed');
+            ->where('status', Purchase::STATUS_COMPLETED);
 
         if ($q !== '') {
             $query->whereHas('asset', fn ($sub) => $sub->where('title', 'like', "%{$q}%"));
@@ -54,14 +50,10 @@ class UserOwnedAssetController extends Controller
         ]);
     }
 
-    /**
-     * Show one ownership row (ensures it belongs to the user).
-     * GET /admin/users/{user}/owned-assets/{purchase}
-     */
+    /** SHOW: GET /admin/users/{user}/owned-assets/{purchase} */
     public function show(User $user, Purchase $purchase)
     {
         abort_unless($purchase->user_id === $user->id, 404, 'Not found.');
-
         $purchase->loadMissing('asset:' . implode(',', $this->assetSelect()));
 
         return response()->json([
@@ -70,20 +62,19 @@ class UserOwnedAssetController extends Controller
         ]);
     }
 
-    /**
-     * Manually grant asset ownership (idempotent).
-     * POST /admin/users/{user}/owned-assets   { asset_id }
-     */
+    /** STORE: POST /admin/users/{user}/owned-assets  {asset_id, allow_overdraft?:bool} */
     public function store(Request $request, User $user)
     {
         $validated = $request->validate([
-            'asset_id' => ['required', 'integer', Rule::exists('assets', 'id')],
+            'asset_id'        => ['required', 'integer', Rule::exists('assets', 'id')],
+            'allow_overdraft' => ['nullable', 'boolean'],
         ]);
-        $assetId = (int) $validated['asset_id'];
+        $assetId        = (int) $validated['asset_id'];
+        $allowOverdraft = (bool) ($validated['allow_overdraft'] ?? false);
 
         $alreadyOwned = Purchase::where('user_id', $user->id)
             ->where('asset_id', $assetId)
-            ->where('status', 'completed')
+            ->where('status', Purchase::STATUS_COMPLETED)
             ->exists();
 
         if ($alreadyOwned) {
@@ -91,20 +82,35 @@ class UserOwnedAssetController extends Controller
         }
 
         try {
-            $purchase = DB::transaction(function () use ($user, $assetId) {
+            $purchase = DB::transaction(function () use ($user, $assetId, $allowOverdraft) {
+                $u     = User::where('id', $user->id)->lockForUpdate()->firstOrFail();
+                $asset = Asset::findOrFail($assetId);
+
+                $assetPoints = (int) ($asset->points ?? 0);
+                $assetPrice  = (float) ($asset->price ?? 0);
+
+                if (!$allowOverdraft && $u->points < $assetPoints) {
+                    abort(422, 'Insufficient points to grant this asset.');
+                }
+
+                $u->points = (int) $u->points - $assetPoints;
+                $u->save();
+
                 return Purchase::create([
-                    'user_id'      => $user->id,
-                    'asset_id'     => $assetId,
-                    'points_spent' => 0,
-                    'cost_amount'  => 0,
+                    'user_id'      => $u->id,
+                    'asset_id'     => $asset->id,
+                    'points_spent' => $assetPoints,
+                    'cost_amount'  => $assetPrice,
                     'currency'     => 'PHP',
-                    'status'       => 'completed',
+                    'status'       => Purchase::STATUS_COMPLETED,
+                    'source'       => Purchase::SOURCE_MANUAL,
+                    'revoked_at'   => null,
                 ]);
             });
 
             $purchase->load('asset:' . implode(',', $this->assetSelect()));
 
-            Log::info('Manual asset grant', [
+            Log::info('Manual asset grant (with points deduction)', [
                 'purchase_id' => $purchase->id,
                 'user_id'     => $user->id,
                 'asset_id'    => $assetId,
@@ -121,46 +127,103 @@ class UserOwnedAssetController extends Controller
                 'asset_id' => $assetId,
                 'error'    => $e->getMessage(),
             ]);
-            return response()->json(['message' => 'Failed to grant asset.'], 500);
+            $code = (int) ($e->getCode() ?: 500);
+            return response()->json(['message' => $e->getMessage()], $code >= 400 && $code < 600 ? $code : 500);
         }
     }
 
     /**
-     * Update ownership (simple status toggle or explicit set).
-     * PATCH /admin/owned-assets/{purchase}
-     * Body: { action?: revoke|unrevoke, status?: pending|completed|failed|refunded }
+     * UPDATE: PATCH /admin/owned-assets/{purchase}
+     * { action?: revoke|unrevoke, status?: pending|completed|failed|revoked, refund_points?: bool }
+     *
+     * NOTE: If refund_points=true during revoke, the purchase row is DELETED.
      */
     public function update(Request $request, Purchase $purchase)
     {
         $validated = $request->validate([
-            'action' => ['nullable', Rule::in(['revoke', 'unrevoke'])],
-            'status' => ['nullable', Rule::in(['pending', 'completed', 'failed', 'refunded'])],
+            'action'        => ['nullable', Rule::in(['revoke', 'unrevoke'])],
+            'status'        => ['nullable', Rule::in([
+                Purchase::STATUS_PENDING, Purchase::STATUS_COMPLETED,
+                Purchase::STATUS_FAILED, Purchase::STATUS_REVOKED
+            ])],
+            'refund_points' => ['nullable', 'boolean'],
         ]);
+        $refundPoints = (bool) ($validated['refund_points'] ?? false);
 
         try {
-            DB::transaction(function () use ($purchase, $validated) {
+            $result = DB::transaction(function () use ($purchase, $validated, $refundPoints) {
+                $wasCompleted = $purchase->status === Purchase::STATUS_COMPLETED;
+
+                // --- ACTIONS ---
                 if (($validated['action'] ?? null) === 'revoke') {
-                    $purchase->update(['status' => 'refunded']);
+                    return $this->safeRevoke($purchase, $wasCompleted, $refundPoints);
                 } elseif (($validated['action'] ?? null) === 'unrevoke') {
-                    $purchase->update(['status' => 'completed']);
+                    // try to return to COMPLETED (guard uniqueness)
+                    try {
+                        $purchase->update(['status' => Purchase::STATUS_COMPLETED, 'revoked_at' => null]);
+                    } catch (QueryException $qe) {
+                        if (($qe->errorInfo[1] ?? null) === 1062) {
+                            abort(422, 'Already owned (another COMPLETED row exists for this asset).');
+                        }
+                        throw $qe;
+                    }
                 }
 
+                // --- DIRECT STATUS OVERRIDE ---
                 if (array_key_exists('status', $validated) && $validated['status'] !== null) {
-                    $purchase->update(['status' => $validated['status']]);
+                    if ($validated['status'] === Purchase::STATUS_REVOKED) {
+                        return $this->safeRevoke($purchase, $wasCompleted, $refundPoints);
+                    }
+                    if ($validated['status'] === Purchase::STATUS_COMPLETED) {
+                        try {
+                            $purchase->update(['status' => Purchase::STATUS_COMPLETED, 'revoked_at' => null]);
+                        } catch (QueryException $qe) {
+                            if (($qe->errorInfo[1] ?? null) === 1062) {
+                                abort(422, 'Already owned (another COMPLETED row exists for this asset).');
+                            }
+                            throw $qe;
+                        }
+                    } else {
+                        $purchase->update(['status' => $validated['status']]);
+                    }
                 }
+
+                // back-fill snapshots if we’re now COMPLETED
+                if ($purchase->status === Purchase::STATUS_COMPLETED) {
+                    $needsPoints = $purchase->points_spent === null;
+                    $needsCost   = $purchase->cost_amount === null;
+                    if ($needsPoints || $needsCost) {
+                        $asset   = $purchase->asset ?: Asset::find($purchase->asset_id);
+                        $updates = [];
+                        if ($needsPoints) $updates['points_spent'] = (int) ($asset->points ?? 0);
+                        if ($needsCost)   $updates['cost_amount']  = (float) ($asset->price ?? 0);
+                        if ($updates) $purchase->update($updates);
+                    }
+                }
+
+                return 'ok';
             });
 
-            $purchase->refresh()->loadMissing('asset:' . implode(',', $this->assetSelect()));
+            // If deleted during refund, don't try to refresh
+            $exists = $purchase->exists;
+            if ($exists) {
+                $purchase->refresh()->loadMissing('asset:' . implode(',', $this->assetSelect()));
+            }
 
             Log::info('Ownership updated', [
-                'purchase_id' => $purchase->id,
-                'status'      => $purchase->status,
+                'purchase_id' => $purchase->id ?? null,
+                'status'      => $exists ? $purchase->status : 'deleted',
                 'admin_id'    => auth()->id(),
+                'result'      => $result,
             ]);
 
+            $message = (!$exists || $result === 'deleted')
+                ? 'Ownership revoked, points refunded, and log removed.'
+                : 'Ownership updated.';
+
             return response()->json([
-                'message'  => 'Ownership updated.',
-                'purchase' => $this->presentPurchase($purchase),
+                'message'  => $message,
+                'purchase' => $exists ? $this->presentPurchase($purchase) : null,
             ]);
         } catch (\Throwable $e) {
             Log::error('Ownership update failed', [
@@ -172,35 +235,60 @@ class UserOwnedAssetController extends Controller
     }
 
     /**
-     * Revoke (default) or hard delete ownership.
-     * DELETE /admin/owned-assets/{purchase}?mode=revoke|delete
+     * DESTROY: DELETE /admin/owned-assets/{purchase}?mode=revoke|delete
+     * Body (when mode=revoke): { refund_points?: bool }
+     *
+     * NOTE: If refund_points=true during revoke, the purchase row is DELETED.
      */
     public function destroy(Request $request, Purchase $purchase)
     {
-        $mode = $request->query('mode', 'revoke');
+        $mode         = $request->query('mode', 'revoke');
+        $refundPoints = (bool) $request->boolean('refund_points', false);
 
         try {
             if ($mode === 'delete') {
-                $payload = [
+                $wasCompleted = $purchase->status === Purchase::STATUS_COMPLETED;
+                $uid = $purchase->user_id;
+
+                DB::transaction(function () use ($purchase, $wasCompleted, $refundPoints, $uid) {
+                    if ($wasCompleted && $refundPoints) {
+                        $u = User::where('id', $uid)->lockForUpdate()->first();
+                        if ($u) {
+                            $u->points = (int) $u->points + (int) ($purchase->points_spent ?? 0);
+                            $u->save();
+                        }
+                    }
+                    $purchase->delete();
+                });
+
+                Log::info('Ownership hard deleted', [
                     'purchase_id' => $purchase->id,
-                    'user_id'     => $purchase->user_id,
-                    'asset_id'    => $purchase->asset_id,
+                    'refund'      => $refundPoints,
                     'admin_id'    => auth()->id(),
-                ];
-                $purchase->delete();
-                Log::info('Ownership hard deleted', $payload);
+                ]);
+
                 return response()->json(['message' => 'Ownership deleted.'], 200);
             }
 
-            $purchase->update(['status' => 'refunded']); // revoke
+            // mode = revoke (preferred)
+            $result = DB::transaction(function () use ($purchase, $refundPoints) {
+                return $this->safeRevoke($purchase, $purchase->status === Purchase::STATUS_COMPLETED, $refundPoints);
+            });
+
             Log::info('Ownership revoked', [
-                'purchase_id' => $purchase->id,
+                'purchase_id' => $purchase->id ?? null,
                 'user_id'     => $purchase->user_id,
                 'asset_id'    => $purchase->asset_id,
+                'refund'      => $refundPoints,
+                'removed_log' => $result === 'deleted',
                 'admin_id'    => auth()->id(),
             ]);
 
-            return response()->json(['message' => 'Ownership revoked.'], 200);
+            $msg = ($result === 'deleted')
+                ? 'Ownership revoked, points refunded, and log removed.'
+                : 'Ownership revoked.';
+
+            return response()->json(['message' => $msg], 200);
         } catch (\Throwable $e) {
             Log::error('Ownership revoke/delete failed', [
                 'purchase_id' => $purchase->id,
@@ -211,10 +299,7 @@ class UserOwnedAssetController extends Controller
         }
     }
 
-    /**
-     * Minimal asset list for the admin picker.
-     * GET /admin/assets-light?q=&category_id=&per_page=&page=
-     */
+    /** Minimal picker: GET /admin/assets-light */
     public function assetsLight(Request $request)
     {
         $q        = trim((string) $request->query('q', ''));
@@ -257,47 +342,61 @@ class UserOwnedAssetController extends Controller
         ]);
     }
 
-    /**
-     * Bulk grant.
-     * POST /admin/users/{user}/owned-assets/bulk  { asset_ids: int[] }
-     */
+    /** BULK GRANT: POST /admin/users/{user}/owned-assets/bulk */
     public function bulkStore(Request $request, User $user)
     {
         $validated = $request->validate([
-            'asset_ids'   => ['required', 'array', 'min:1'],
-            'asset_ids.*' => ['integer', Rule::exists('assets', 'id')],
+            'asset_ids'       => ['required', 'array', 'min:1'],
+            'asset_ids.*'     => ['integer', Rule::exists('assets', 'id')],
+            'allow_overdraft' => ['nullable', 'boolean'],
         ]);
 
-        $assetIds = array_values(array_unique(array_map('intval', $validated['asset_ids'])));
-        $result   = ['granted' => [], 'skipped' => []];
+        $assetIds       = array_values(array_unique(array_map('intval', $validated['asset_ids'])));
+        $allowOverdraft = (bool) ($validated['allow_overdraft'] ?? false);
+        $result         = ['granted' => [], 'skipped' => [], 'insufficient' => []];
 
         try {
-            DB::transaction(function () use ($user, $assetIds, &$result) {
-                foreach ($assetIds as $assetId) {
-                    $owned = Purchase::where('user_id', $user->id)
-                        ->where('asset_id', $assetId)
-                        ->where('status', 'completed')
-                        ->exists();
+            DB::transaction(function () use ($user, $assetIds, $allowOverdraft, &$result) {
+                $u = User::where('id', $user->id)->lockForUpdate()->firstOrFail();
+                $assets = Asset::whereIn('id', $assetIds)->get()->keyBy('id');
 
-                    if ($owned) {
-                        $result['skipped'][] = $assetId;
+                foreach ($assetIds as $assetId) {
+                    $owned = Purchase::where('user_id', $u->id)
+                        ->where('asset_id', $assetId)
+                        ->where('status', Purchase::STATUS_COMPLETED)
+                        ->exists();
+                    if ($owned) { $result['skipped'][] = $assetId; continue; }
+
+                    $asset = $assets->get($assetId);
+                    if (!$asset) { $result['skipped'][] = $assetId; continue; }
+
+                    $assetPoints = (int) ($asset->points ?? 0);
+                    $assetPrice  = (float) ($asset->price ?? 0);
+
+                    if (!$allowOverdraft && $u->points < $assetPoints) {
+                        $result['insufficient'][] = $assetId;
                         continue;
                     }
 
+                    $u->points = (int) $u->points - $assetPoints;
+                    $u->save();
+
                     Purchase::create([
-                        'user_id'      => $user->id,
+                        'user_id'      => $u->id,
                         'asset_id'     => $assetId,
-                        'points_spent' => 0,
-                        'cost_amount'  => 0,
+                        'points_spent' => $assetPoints,
+                        'cost_amount'  => $assetPrice,
                         'currency'     => 'PHP',
-                        'status'       => 'completed',
+                        'status'       => Purchase::STATUS_COMPLETED,
+                        'source'       => Purchase::SOURCE_MANUAL,
+                        'revoked_at'   => null,
                     ]);
 
                     $result['granted'][] = $assetId;
                 }
             });
 
-            Log::info('Bulk manual grant', [
+            Log::info('Bulk manual grant (with points deduction)', [
                 'user_id'  => $user->id,
                 'result'   => $result,
                 'admin_id' => auth()->id(),
@@ -313,35 +412,43 @@ class UserOwnedAssetController extends Controller
         }
     }
 
-    /**
-     * Bulk revoke/delete.
-     * DELETE /admin/owned-assets/bulk  { purchase_ids: int[], mode?: revoke|delete }
-     */
+    /** BULK DESTROY: DELETE /admin/owned-assets/bulk */
     public function bulkDestroy(Request $request)
     {
         $validated = $request->validate([
             'purchase_ids'   => ['required', 'array', 'min:1'],
             'purchase_ids.*' => ['integer', Rule::exists('purchases', 'id')],
             'mode'           => ['nullable', Rule::in(['revoke', 'delete'])],
+            'refund_points'  => ['nullable', 'boolean'],
         ]);
 
-        $mode = $validated['mode'] ?? 'revoke';
+        $mode         = $validated['mode'] ?? 'revoke';
+        $refundPoints = (bool) ($validated['refund_points'] ?? false);
 
         try {
-            DB::transaction(function () use ($validated, $mode) {
+            DB::transaction(function () use ($validated, $mode, $refundPoints) {
                 $purchases = Purchase::whereIn('id', $validated['purchase_ids'])->get();
-                foreach ($purchases as $p) {
-                    if ($mode === 'delete') {
+
+                if ($mode === 'delete') {
+                    foreach ($purchases as $p) {
+                        if ($p->status === Purchase::STATUS_COMPLETED && $refundPoints) {
+                            $u = User::where('id', $p->user_id)->lockForUpdate()->first();
+                            if ($u) { $u->points += (int) ($p->points_spent ?? 0); $u->save(); }
+                        }
                         $p->delete();
-                    } else {
-                        $p->update(['status' => 'refunded']);
                     }
+                    return;
+                }
+
+                foreach ($purchases as $p) {
+                    $this->safeRevoke($p, $p->status === Purchase::STATUS_COMPLETED, $refundPoints);
                 }
             });
 
             Log::info('Bulk ownership modification', [
                 'purchase_ids' => $validated['purchase_ids'],
                 'mode'         => $mode,
+                'refund'       => $refundPoints,
                 'admin_id'     => auth()->id(),
             ]);
 
@@ -356,7 +463,53 @@ class UserOwnedAssetController extends Controller
         }
     }
 
-    /* ===== Helpers ===== */
+    /* ===================== Helpers ===================== */
+
+    /**
+     * Revoke safely.
+     * - If $refundPoints === true:
+     *    * refund user's points (if it was COMPLETED)
+     *    * DELETE the purchase row (remove the log)
+     *    * return "deleted"
+     * - If $refundPoints === false:
+     *    * set status=REVOKED (keep the row)
+     *    * return "revoked"
+     */
+    private function safeRevoke(Purchase $purchase, bool $wasCompleted, bool $refundPoints): string
+    {
+        if ($refundPoints) {
+            // refund then delete
+            if ($wasCompleted) {
+                $u = User::where('id', $purchase->user_id)->lockForUpdate()->first();
+                if ($u) {
+                    $u->points = (int) $u->points + (int) ($purchase->points_spent ?? 0);
+                    $u->save();
+                }
+            }
+            $purchase->delete();
+            return 'deleted';
+        }
+
+        // Keep a single REVOKED row for this pair (avoid unique collisions).
+        Purchase::where('user_id', $purchase->user_id)
+            ->where('asset_id', $purchase->asset_id)
+            ->where('status', Purchase::STATUS_REVOKED)
+            ->where('id', '!=', $purchase->id)
+            ->delete();
+
+        try {
+            $purchase->update(['status' => Purchase::STATUS_REVOKED, 'revoked_at' => now()]);
+        } catch (QueryException $qe) {
+            if (($qe->errorInfo[1] ?? null) === 1062) {
+                // As a last resort, just delete the current one to satisfy the constraint.
+                $purchase->delete();
+                return 'deleted';
+            }
+            throw $qe;
+        }
+
+        return 'revoked';
+    }
 
     private function assetSelect(): array
     {
@@ -371,7 +524,6 @@ class UserOwnedAssetController extends Controller
     {
         $asset = $p->asset;
         $image = null;
-
         if ($asset) {
             $image = (Schema::hasColumn('assets', 'cover_image_path') && !empty($asset->cover_image_path))
                 ? $asset->cover_image_path
@@ -379,12 +531,16 @@ class UserOwnedAssetController extends Controller
         }
 
         return [
-            'purchase_id' => $p->id,
-            'user_id'     => $p->user_id,
-            'asset_id'    => $p->asset_id,
-            'status'      => $p->status,
-            'granted_at'  => optional($p->created_at)?->toDateTimeString(),
-            'asset'       => $asset ? [
+            'purchase_id'  => $p->id,
+            'user_id'      => $p->user_id,
+            'asset_id'     => $p->asset_id,
+            'status'       => $p->status,
+            'source'       => $p->source,
+            'points_spent' => (int) $p->points_spent,
+            'cost_amount'  => (float) $p->cost_amount,
+            'currency'     => $p->currency,
+            'granted_at'   => optional($p->created_at)?->toDateTimeString(),
+            'asset'        => $asset ? [
                 'id'          => $asset->id,
                 'title'       => $asset->title,
                 'image_url'   => $image,
