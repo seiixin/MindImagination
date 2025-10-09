@@ -26,37 +26,38 @@ class AssetController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'user_id'          => 'required|exists:users,id',
-            'category_id'      => 'nullable|exists:store_categories,id',
-            'title'            => 'required|max:255',
-            'description'      => 'nullable|string',
-            'price'            => 'nullable|numeric|min:0',
-            'points'           => 'nullable|integer|min:0',
-            'maintenance_cost' => 'nullable|numeric|min:0',
+            'user_id'              => 'required|exists:users,id',
+            'category_id'          => 'nullable|exists:store_categories,id',
+            'title'                => 'required|max:255',
+            'description'          => 'nullable|string',
+            'price'                => 'nullable|numeric|min:0',
+            'points'               => 'nullable|integer|min:0',
+            'maintenance_cost'     => 'nullable|numeric|min:0',
 
-            'file_path'          => 'nullable|image|mimes:jpg,jpeg,png,webp',
-            'video_path'         => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo',
-            'sub_image_path'     => 'nullable|array',
-            'sub_image_path.*'   => 'image|mimes:jpg,jpeg,png,webp',
-            'download_file_path' => 'nullable|file',
-            'cover_image_path'   => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'file_path'            => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'video_path'           => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo',
+            'sub_image_path'       => 'nullable|array',
+            'sub_image_path.*'     => 'image|mimes:jpg,jpeg,png,webp',
+            'download_file_path'   => 'nullable|file',
+            'cover_image_path'     => 'nullable|image|mimes:jpg,jpeg,png,webp',
         ]);
 
+        // single-file fields
         foreach (['file_path', 'video_path', 'download_file_path', 'cover_image_path'] as $field) {
             if ($request->hasFile($field)) {
-                $data[$field] = $request->file($field)->store('assets', 'public'); // "assets/xxx.ext"
+                $data[$field] = $request->file($field)->store('assets', 'public'); // e.g. "assets/xxx.ext"
             }
         }
 
+        // multiple screenshots
+        $data['sub_image_path'] = [];
         if ($request->hasFile('sub_image_path')) {
-            $sub = [];
-            foreach ($request->file('sub_image_path') as $file) {
-                $sub[] = $file->store('assets', 'public');
+            foreach ((array) $request->file('sub_image_path') as $file) {
+                $data['sub_image_path'][] = $file->store('assets', 'public');
             }
-            $data['sub_image_path'] = json_encode($sub);
         }
 
-        // If you have a slug column, auto-generate when absent
+        // Optional slug
         if (Schema::hasColumn('assets', 'slug') && empty($data['slug'] ?? null)) {
             $base = Str::slug($data['title']);
             $slug = $base;
@@ -67,8 +68,8 @@ class AssetController extends Controller
             $data['slug'] = $slug;
         }
 
-        $asset = Asset::create($data);
-        $asset = Asset::with(['category', 'comments', 'views', 'ratings', 'favorites'])->findOrFail($asset->id);
+        // Because Asset::$casts has sub_image_path => 'array', passing an array is correct.
+        $asset = Asset::create($data)->load(['category', 'comments', 'views', 'ratings', 'favorites']);
 
         return response()->json($this->transformAsset($asset), 201);
     }
@@ -82,37 +83,50 @@ class AssetController extends Controller
     public function update(Request $request, Asset $asset)
     {
         $data = $request->validate([
-            'user_id'          => 'sometimes|exists:users,id',
-            'category_id'      => 'nullable|exists:store_categories,id',
-            'title'            => 'required|max:255',
-            'description'      => 'nullable|string',
-            'price'            => 'nullable|numeric|min:0',
-            'points'           => 'nullable|integer|min:0',
-            'maintenance_cost' => 'nullable|numeric|min:0',
+            'user_id'              => 'sometimes|exists:users,id',
+            'category_id'          => 'nullable|exists:store_categories,id',
+            'title'                => 'required|max:255',
+            'description'          => 'nullable|string',
+            'price'                => 'nullable|numeric|min:0',
+            'points'               => 'nullable|integer|min:0',
+            'maintenance_cost'     => 'nullable|numeric|min:0',
 
-            'file_path'          => 'nullable|image|mimes:jpg,jpeg,png,webp',
-            'video_path'         => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo',
-            'sub_image_path'     => 'nullable|array',
-            'sub_image_path.*'   => 'image|mimes:jpg,jpeg,png,webp',
-            'download_file_path' => 'nullable|file',
-            'cover_image_path'   => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'file_path'            => 'nullable|image|mimes:jpg,jpeg,png,webp',
+            'video_path'           => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo',
+            'sub_image_path'       => 'nullable|array',
+            'sub_image_path.*'     => 'image|mimes:jpg,jpeg,png,webp',
+            'download_file_path'   => 'nullable|file',
+            'cover_image_path'     => 'nullable|image|mimes:jpg,jpeg,png,webp',
+
+            // optional control: replace instead of append
+            'replace_sub_images'   => 'nullable|boolean',
         ]);
 
+        // single-file fields
         foreach (['file_path', 'video_path', 'download_file_path', 'cover_image_path'] as $field) {
             if ($request->hasFile($field)) {
                 $data[$field] = $request->file($field)->store('assets', 'public');
             }
         }
 
+        // multiple screenshots: append by default, or replace if requested
+        $newSubs = [];
         if ($request->hasFile('sub_image_path')) {
-            $sub = [];
-            foreach ($request->file('sub_image_path') as $file) {
-                $sub[] = $file->store('assets', 'public');
+            foreach ((array) $request->file('sub_image_path') as $file) {
+                $newSubs[] = $file->store('assets', 'public');
             }
-            $data['sub_image_path'] = json_encode($sub);
         }
 
-        // Optional: update slug if provided (and column exists)
+        if ($newSubs) {
+            $replace = (bool) ($data['replace_sub_images'] ?? false);
+            unset($data['replace_sub_images']);
+
+            $existing = is_array($asset->sub_image_path) ? $asset->sub_image_path : [];
+            $data['sub_image_path'] = $replace ? array_values($newSubs)
+                                               : array_values(array_merge($existing, $newSubs));
+        }
+
+        // Optional: set slug once if column exists and asset had none
         if (Schema::hasColumn('assets', 'slug') && isset($data['title']) && empty($asset->slug)) {
             $base = Str::slug($data['title']);
             $slug = $base;
@@ -124,8 +138,8 @@ class AssetController extends Controller
         }
 
         $asset->update($data);
-
         $asset->load(['category', 'comments', 'views', 'ratings', 'favorites']);
+
         return response()->json($this->transformAsset($asset));
     }
 
@@ -148,26 +162,21 @@ class AssetController extends Controller
             'favorites',
         ]);
 
-        // 1) Try real slug column
         $asset = Schema::hasColumn('assets', 'slug')
             ? $query->where('slug', $slug)->first()
             : null;
 
-        // 2) Fallback: title → slug match
         if (!$asset) {
             $asset = $query
                 ->whereRaw('LOWER(REPLACE(title," ","-")) = ?', [strtolower($slug)])
                 ->first();
         }
 
-        // 3) Last fallback: numeric id (if user pasted /assets/123)
         if (!$asset && ctype_digit($slug)) {
             $asset = $query->find($slug);
         }
 
-        if (!$asset) {
-            abort(404);
-        }
+        if (!$asset) abort(404);
 
         $arr = $this->transformAsset($asset);
         $arr['views_count']     = $asset->views()->count();
@@ -176,7 +185,6 @@ class AssetController extends Controller
         $arr['avg_rating']      = (float) ($asset->ratings()->avg('rating') ?? 0);
         $arr['slug']            = $asset->slug ?? Str::slug($asset->title ?? (string) $asset->id);
 
-        // Render the page expected by resources/js/Pages/UserPages/AssetDetails.jsx
         return Inertia::render('UserPages/AssetDetails', [
             'asset' => $arr,
             'auth'  => ['user' => auth()->user()],
@@ -185,9 +193,6 @@ class AssetController extends Controller
 
     /* ===================== Helpers ===================== */
 
-    /**
-     * Convert DB media paths to absolute public URLs for JSON/Inertia.
-     */
     private function transformAsset(Asset $asset): array
     {
         $arr = $asset->toArray();
@@ -196,26 +201,21 @@ class AssetController extends Controller
             $arr[$field] = $this->toPublicUrl($asset->{$field});
         }
 
-        $raw = $asset->getRawOriginal('sub_image_path');
-        $list = [];
-
-        if (is_array($asset->sub_image_path)) {
-            $list = array_map(fn ($p) => $this->toPublicUrl($p), $asset->sub_image_path);
-        } elseif (is_string($raw)) {
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                $list = array_map(fn ($p) => $this->toPublicUrl($p), $decoded);
-            }
+        // sub images
+        $sub = $asset->sub_image_path;
+        if (!is_array($sub)) {
+            $raw = $asset->getRawOriginal('sub_image_path');
+            $decoded = is_string($raw) ? json_decode($raw, true) : [];
+            $sub = is_array($decoded) ? $decoded : [];
         }
-
-        $arr['sub_image_path'] = $list;
+        $arr['sub_image_path'] = array_map(fn ($p) => $this->toPublicUrl($p), $sub);
 
         return $arr;
     }
 
     /**
-     * Build a public URL from a stored path.
-     * Accepts null, absolute URLs, "/storage/...", "assets/abc.jpg", or "/assets/abc.jpg".
+     * Turn a stored path into a public URL.
+     * Accepts: null, absolute URL, "/storage/...", "assets/xxx.ext", or "/assets/xxx.ext".
      */
     private function toPublicUrl($path): ?string
     {
@@ -230,7 +230,7 @@ class AssetController extends Controller
         }
 
         if (is_string($path)) {
-            $normalized = ltrim($path, '/'); // remove any leading "/"
+            $normalized = ltrim($path, '/'); // "assets/xxx.ext"
             return Storage::disk('public')->url($normalized); // APP_URL + "/storage/{path}"
         }
 
