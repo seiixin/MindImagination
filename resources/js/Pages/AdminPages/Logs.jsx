@@ -11,7 +11,7 @@ export default function Logs() {
     <AdminLayout>
       <div className="p-4">
         <div className="flex space-x-4 mb-4">
-          {['purchase', 'download', 'active'].map((tab) => (
+          {['purchase', 'download'].map((tab) => (
             <button
               key={tab}
               className={`px-4 py-2 rounded ${
@@ -26,7 +26,6 @@ export default function Logs() {
 
         {activeTab === 'purchase' && <Purchases />}
         {activeTab === 'download' && <Downloads />}
-        {activeTab === 'active' && <ActiveGames />}
       </div>
     </AdminLayout>
   );
