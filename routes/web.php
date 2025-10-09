@@ -15,6 +15,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PurchaseController;
+use App\Http\Controllers\UserAssetOwnedController;
 use App\Http\Controllers\Admin\SlideController;
 use App\Http\Controllers\Admin\PolicyController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
@@ -152,6 +153,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post  ('/conversations/{conversation}/messages', [ChatSupportController::class, 'sendMessage'])->name('messages.store');
         Route::put   ('/conversations/{conversation}/status',   [ChatSupportController::class, 'updateStatus'])->name('conversations.status');
         Route::delete('/messages/{message}',                    [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
+    });
+
+
+    // Owned Assets// Owned Assets (User-facing)
+    Route::prefix('my')->name('user.')->group(function () {
+        Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])
+            ->name('owned-assets.index');
+
+        Route::get('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
+            ->whereNumber('asset')
+            ->name('owned-assets.download');
+    });
+
+    // Owned Assets (User-facing)
+    Route::prefix('my')->name('user.')->group(function () {
+        Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])
+            ->name('owned-assets.index');
+
+        Route::get('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
+            ->whereNumber('asset')
+            ->name('owned-assets.download');
     });
 
     // Purchase Plans
