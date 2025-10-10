@@ -1,16 +1,11 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 
-// Models
-use App\Models\Slide;
-use App\Models\Asset;
-use App\Models\Purchase;
-
 // Controllers
+use App\Http\Controllers\StorefrontController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\ProfileController;
@@ -21,11 +16,11 @@ use App\Http\Controllers\Admin\PolicyController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
-use App\Http\Controllers\Auth\NewPasswordController; // Breeze/Jetstream
+use App\Http\Controllers\Auth\NewPasswordController;
 use App\Http\Controllers\Admin\ContactSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\StoreCategoryController;
-use App\Http\Controllers\Admin\AssetController; // also used for guest details
+use App\Http\Controllers\Admin\AssetController;
 use App\Http\Controllers\Admin\ChatController;
 use App\Http\Controllers\Admin\LogsController;
 use App\Http\Controllers\Admin\BackupController;
@@ -40,69 +35,8 @@ use App\Http\Controllers\Admin\UserOwnedAssetController;
 | Public (Guest)
 |--------------------------------------------------------------------------
 */
-Route::get('/', function () {
-    $slides = Slide::query()
-        ->when(Schema::hasColumn('slides', 'is_featured'), fn ($q) => $q->where('is_featured', true))
-        ->when(Schema::hasColumn('slides', 'is_active'), fn ($q) => $q->where('is_active', true))
-        ->when(Schema::hasColumn('slides', 'sort_order'), fn ($q) => $q->orderBy('sort_order'))
-        ->get(['id', 'image_path', 'details']);
-
-    // Build a safe column list based on existing schema
-    $assetFields = array_values(array_filter([
-        'id',
-        'title',
-        Schema::hasColumn('assets', 'cover_image_path') ? 'cover_image_path' : null,
-        'file_path',
-        'points',
-        'price',
-        Schema::hasColumn('assets', 'slug') ? 'slug' : null,
-    ]));
-
-    $assetsCollection = Asset::query()
-        ->when(Schema::hasColumn('assets', 'is_published'), fn ($q) => $q->where('is_published', 1))
-        ->latest('id')
-        ->limit(24)
-        ->get($assetFields);
-
-    // Add "owned" flag for signed-in users (status must be 'completed'; handle optional revoked_at)
-    $ownedIds = [];
-    if (auth()->check()) {
-        $statusCompleted = defined(Purchase::class . '::STATUS_COMPLETED') ? Purchase::STATUS_COMPLETED : 'completed';
-
-        $ownedQuery = Purchase::where('user_id', auth()->id())
-            ->where('status', $statusCompleted);
-
-        if (Schema::hasColumn('purchases', 'revoked_at')) {
-            $ownedQuery->whereNull('revoked_at');
-        }
-
-        $ownedIds = $ownedQuery->pluck('asset_id')->all();
-    }
-
-    $assets = $assetsCollection->map(function ($a) use ($ownedIds) {
-        $slug = Schema::hasColumn('assets', 'slug') && !empty($a->slug)
-            ? $a->slug
-            : Str::slug($a->title ?? (string) $a->id);
-
-        $imageUrl = (Schema::hasColumn('assets', 'cover_image_path') && !empty($a->cover_image_path))
-            ? $a->cover_image_path
-            : $a->file_path;
-
-        return [
-            'id'        => $a->id,
-            'title'     => $a->title,
-            'slug'      => $slug,
-            'image_url' => $imageUrl,
-            'points'    => $a->points,
-            'price'     => $a->price,
-            'owned'     => in_array($a->id, $ownedIds, true),
-        ];
-    });
-
-    return Inertia::render('GuestPages/Store', [
-        'slides' => $slides,
-        'assets' => $assets,
-    ]);
+Route::get('/', function (Request $request, StorefrontController $ctrl) {
+    return $ctrl->index($request);
 })->name('store');
 
 Route::get('/contact', fn () => Inertia::render('GuestPages/ContactUs'))->name('contact');
@@ -110,6 +44,14 @@ Route::get('/privacy-policy', fn () => Inertia::render('GuestPages/PrivacyPolicy
 
 // Guest asset detail (preloaded)
 Route::get('/assets/{slug}', [AssetController::class, 'showBySlug'])->name('assets.details');
+
+/**
+ * Make views endpoint PUBLIC (accessible by guests and logged-in users).
+ * IMPORTANT: iisang route lang ito para walang conflict sa guest/auth.
+ */
+Route::post('/assets/{asset}/views', [AssetInteractionController::class, 'viewsStore'])
+    ->whereNumber('asset')
+    ->name('assets.views.store');
 
 /*
 |--------------------------------------------------------------------------
@@ -155,8 +97,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/messages/{message}',                    [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
     });
 
-
-    // Owned Assets// Owned Assets (User-facing)
+    // Owned Assets (User-facing) — keep a single block only
     Route::prefix('my')->name('user.')->group(function () {
         Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])
             ->name('owned-assets.index');
@@ -166,26 +107,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('owned-assets.download');
     });
 
-    // Owned Assets (User-facing)
-    Route::prefix('my')->name('user.')->group(function () {
-        Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])
-            ->name('owned-assets.index');
-
-        Route::get('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
-            ->whereNumber('asset')
-            ->name('owned-assets.download');
-    });
-
-    // Purchase Plans
-    Route::get ('/buy-points',       [PurchaseController::class, 'index'])->name('buy-points');
-    Route::post('/paymongo/source',  [PurchaseController::class, 'createSource'])->name('paymongo.source');
-    Route::post('/paymongo/payment', [PurchaseController::class, 'createPayment'])->name('paymongo.payment');
-
-    Route::get ('/payment-success',  [PurchaseController::class, 'success'])->name('payment.success');
-    Route::get ('/payment-failed',   [PurchaseController::class, 'failed'])->name('payment.failed');
-
-    // Asset Interactions (CRUD)
+    // Asset Interactions (CRUD) — keep these auth-scoped endpoints
     Route::prefix('assets/{asset}')
+        ->where(['asset' => '[0-9]+'])
         ->controller(AssetInteractionController::class)
         ->group(function () {
             Route::get   ('/comments',         'commentsIndex')->name('assets.comments.index');
@@ -203,7 +127,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/favorites/{id}',   'favoritesDestroy')->name('assets.favorites.destroy');
 
             Route::get   ('/views',            'viewsIndex')->name('assets.views.index');
-            Route::post  ('/views',            'viewsStore')->name('assets.views.store');
+            // NOTE: wala nang POST /views dito; nasa public route na sa taas para iwas conflict
         });
 });
 
@@ -222,7 +146,7 @@ Route::middleware(['auth', 'verified', 'is_admin'])
         Route::get('/privacy', fn () => Inertia::render('AdminPages/PrivacyPolicy'))->name('privacy');
         Route::get('/contact', fn () => Inertia::render('AdminPages/ContactUs'))->name('contact');
 
-        // ✅ Users page — only controller route (no duplicate closure)
+        // Users
         Route::get('/users', [UserController::class, 'index'])->name('users');
         Route::post('/users', [UserController::class, 'store']);
         Route::put('/users/{user}', [UserController::class, 'update']);

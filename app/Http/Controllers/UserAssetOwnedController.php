@@ -68,111 +68,168 @@ class UserAssetOwnedController extends Controller
     /**
      * GET /my/owned-assets/{asset}/download
      * Authorizes ownership, logs the download, then serves/redirects to file.
+     *
+     * NOTE: no implicit model binding here to avoid global-scope/soft-delete 404s.
      */
-    public function download(Request $request, Asset $asset)
-    {
-        $user = $request->user();
+public function download(Request $request, $asset)
+{
+    // Build query without implicit binding to avoid global scopes
+    $query = Asset::query()->withoutGlobalScopes();
 
-        // --- Ownership check (COMPLETED + not revoked) ---
-        $owned = Purchase::query()
-            ->where('user_id', $user->id)
-            ->where('asset_id', $asset->id)
-            ->where('status', Purchase::STATUS_COMPLETED)
-            ->when(Schema::hasColumn('purchases', 'revoked_at'), fn ($q) => $q->whereNull('revoked_at'))
-            ->exists();
+    // Only call withTrashed() if Asset uses SoftDeletes
+    if ($this->modelSupportsSoftDeletes(\App\Models\Asset::class)) {
+        $query = $query->withTrashed();
+    }
 
-        abort_unless($owned, 403, 'You do not own this asset.');
+    $asset = $query->findOrFail((int) $asset);
 
-        // --- Determine downloadable path ---
-        $path = $asset->download_file_path ?: $asset->file_path;
-        abort_if(empty($path), 404, 'No downloadable file for this asset.');
+    $user = $request->user();
 
-        // --- Log download (robust, never blocks download) ---
-        try {
-            DB::transaction(function () use ($request, $user, $asset) {
-                $log = Download::firstOrCreate(
-                    ['user_id' => $user->id, 'asset_id' => $asset->id],
-                    ['download_count' => 0, 'points_used' => 0]
-                );
+    // --- Ownership check ---
+    $owned = Purchase::query()
+        ->where('user_id', $user->id)
+        ->where('asset_id', $asset->id)
+        ->where('status', Purchase::STATUS_COMPLETED)
+        ->when(Schema::hasColumn('purchases', 'revoked_at'), fn ($q) => $q->whereNull('revoked_at'))
+        ->exists();
 
-                $log->ip_address     = $request->ip();
-                $ua                  = (string) ($request->userAgent() ?? '');
-                $log->user_agent     = mb_substr($ua, 0, 255);
-                $log->download_count = (int) ($log->download_count ?? 0) + 1;
-                $log->save();
-            });
-        } catch (\Throwable $e) {
-            Log::warning('Download log failed', [
-                'user_id'  => $user->id,
-                'asset_id' => $asset->id,
-                'error'    => $e->getMessage(),
-            ]);
-        }
+    abort_unless($owned, 403, 'You do not own this asset.');
 
-        // --- Serve/redirect file ---
-        // If already a full URL, just redirect out.
-        if (Str::startsWith($path, ['http://', 'https://'])) {
-            return redirect()->away($path);
-        }
+    // --- Resolve path ---
+    $path = $asset->download_file_path ?: $asset->file_path;
+    abort_if(empty($path), 404, 'No downloadable file for this asset.');
 
-        // Normalize possible "/storage/..." or "/assets/..." to a disk-relative path.
-        $relative = $this->normalizeStoragePath($path); // e.g. "assets/file.png"
+    if (\Illuminate\Support\Str::startsWith($path, ['http://', 'https://'])) {
+        return redirect()->away($path);
+    }
 
-        // Use configured disk; for S3/GCS prefer a signed temporary URL.
-        $disk = config('filesystems.default', 'public');
+    $relative = $this->normalizeStoragePath($path);
 
-        try {
-            $diskInstance = Storage::disk($disk);
+    // Log download (non-blocking)
+    try {
+        DB::transaction(function () use ($request, $user, $asset) {
+            $log = Download::firstOrCreate(
+                ['user_id' => $user->id, 'asset_id' => $asset->id],
+                ['download_count' => 0, 'points_used' => 0]
+            );
 
-            if (method_exists($diskInstance, 'temporaryUrl') && $diskInstance->exists($relative)) {
-                $url = $diskInstance->temporaryUrl($relative, now()->addMinutes(5));
+            $log->ip_address     = $request->ip();
+            $ua                  = (string) ($request->userAgent() ?? '');
+            $log->user_agent     = mb_substr($ua, 0, 255);
+            $log->download_count = (int) ($log->download_count ?? 0) + 1;
+            $log->save();
+        });
+    } catch (\Throwable $e) {
+        Log::warning('Download log failed', [
+            'user_id'  => $user->id,
+            'asset_id' => $asset->id,
+            'error'    => $e->getMessage(),
+        ]);
+    }
+
+    $filename = \Illuminate\Support\Str::slug($asset->title ?: ('asset-' . $asset->id));
+    $ext      = pathinfo($relative, PATHINFO_EXTENSION);
+    $name     = $ext ? ($filename . '.' . $ext) : $filename;
+
+    // 1) public disk (local dev default)
+    try {
+        $publicDisk = Storage::disk('public');
+        if ($publicDisk->exists($relative)) {
+            if (method_exists($publicDisk, 'temporaryUrl')) {
+                $url = $publicDisk->temporaryUrl($relative, now()->addMinutes(5));
                 return redirect()->away($url);
             }
+            return $publicDisk->download($relative, $name);
+        }
+    } catch (\Throwable $e) {
+        Log::warning('Public disk check failed', ['e' => $e->getMessage(), 'rel' => $relative]);
+    }
 
-            if ($diskInstance->exists($relative)) {
-                $filename = Str::slug($asset->title ?: ('asset-' . $asset->id));
-                $ext      = pathinfo($relative, PATHINFO_EXTENSION);
-                $name     = $ext ? ($filename . '.' . $ext) : $filename;
-                return $diskInstance->download($relative, $name);
+    // 2) default disk (if not public)
+    $disk = config('filesystems.default', 'public');
+    if ($disk !== 'public') {
+        try {
+            $d = Storage::disk($disk);
+            if ($d->exists($relative)) {
+                if (method_exists($d, 'temporaryUrl')) {
+                    $url = $d->temporaryUrl($relative, now()->addMinutes(5));
+                    return redirect()->away($url);
+                }
+                return $d->download($relative, $name);
             }
         } catch (\Throwable $e) {
-            // fall through to public disk check
+            Log::warning('Default disk check failed', ['disk' => $disk, 'e' => $e->getMessage(), 'rel' => $relative]);
         }
-
-        // Fallback to public disk explicitly
-        if ($disk !== 'public') {
-            $public = Storage::disk('public');
-            if ($public->exists($relative)) {
-                $filename = Str::slug($asset->title ?: ('asset-' . $asset->id));
-                $ext      = pathinfo($relative, PATHINFO_EXTENSION);
-                $name     = $ext ? ($filename . '.' . $ext) : $filename;
-                return $public->download($relative, $name);
-            }
-        }
-
-        abort(404, 'File not found.');
     }
+
+    // 3) fallback to physical public/storage path
+    $publicStoragePath = public_path('storage/' . ltrim($relative, '/'));
+    if (is_file($publicStoragePath)) {
+        return response()->download($publicStoragePath, $name);
+    }
+
+    // 4) if DB path starts with /storage, just redirect there
+    $normalizedOriginal = str_replace('\\', '/', (string) $path);
+    if (\Illuminate\Support\Str::startsWith($normalizedOriginal, '/storage/')) {
+        return redirect()->away(url($normalizedOriginal));
+    }
+
+    Log::warning('Download file not found', [
+        'asset_id' => $asset->id,
+        'db_path'  => $path,
+        'relative' => $relative,
+        'checked'  => [
+            'public_disk' => Storage::disk('public')->exists($relative),
+            'public_path' => $publicStoragePath,
+        ],
+    ]);
+
+    abort(404, 'File not found.');
+}
+
+/**
+ * Return true if the model uses SoftDeletes.
+ */
+private function modelSupportsSoftDeletes(string $modelClass): bool
+{
+    $traits = function_exists('class_uses_recursive')
+        ? class_uses_recursive($modelClass)
+        : class_uses($modelClass);
+
+    return in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, $traits, true);
+}
 
     /* ===================== Helpers ===================== */
 
     /**
      * Convert DB media paths to a public URL the browser can load.
-     * Accepts null, absolute URLs, "/storage/...", "assets/abc.jpg", or "/assets/abc.jpg".
+     * Accepts null, absolute URLs, "/storage/...", "assets/abc.jpg", "/assets/abc.jpg",
+     * and Windows backslashes.
      */
     private function toPublicUrl($path): ?string
     {
         if (!$path) return null;
 
-        if (is_string($path) && (str_starts_with($path, 'http://') || str_starts_with($path, 'https://'))) {
-            return $path;
-        }
-
-        if (is_string($path) && str_starts_with($path, '/storage/')) {
-            return url($path);
-        }
-
         if (is_string($path)) {
-            $normalized = ltrim($path, '/'); // remove any leading "/"
+            $p = str_replace('\\', '/', $path); // Windows → forward slashes
+
+            if (Str::startsWith($p, ['http://', 'https://'])) {
+                return $p;
+            }
+
+            // If already /storage/... return absolute URL
+            if (Str::startsWith($p, '/storage/')) {
+                return url($p);
+            }
+
+            // If it mistakenly includes 'public/storage/...', map to '/storage/...'
+            if (Str::startsWith(ltrim($p, '/'), 'public/storage/')) {
+                $p = '/' . ltrim(substr(ltrim($p, '/'), strlen('public/')), '/'); // → '/storage/...'
+                return url($p);
+            }
+
+            // Otherwise treat as "public" disk relative (e.g., "assets/xyz.png")
+            $normalized = ltrim($p, '/');
             return Storage::disk('public')->url($normalized); // => APP_URL + "/storage/{normalized}"
         }
 
@@ -181,20 +238,25 @@ class UserAssetOwnedController extends Controller
 
     /**
      * Normalize any stored path to a disk-relative path (for Storage::* calls).
-     * Examples:
-     *   "/storage/assets/foo.png" -> "assets/foo.png"
-     *   "assets/foo.png"         -> "assets/foo.png"
-     *   "/assets/foo.png"        -> "assets/foo.png"
+     * Handles:
+     *   "assets/foo.zip"            -> "assets/foo.zip"
+     *   "/assets/foo.zip"           -> "assets/foo.zip"
+     *   "/storage/assets/foo.zip"   -> "assets/foo.zip"
+     *   "public/storage/assets/..." -> "assets/..."
+     * Also converts backslashes to forward slashes.
      */
     private function normalizeStoragePath(string $path): string
     {
-        $p = ltrim($path, '/');
+        // Normalize slashes
+        $p = str_replace('\\', '/', $path);
+        $p = ltrim($p, '/');
 
-        if (str_starts_with($p, 'storage/')) {
-            // Strip the "storage/" prefix to map to storage/app/public/*
-            return ltrim(substr($p, strlen('storage/')), '/');
+        if (Str::startsWith($p, 'public/storage/')) {
+            $p = substr($p, strlen('public/storage/')); // → "assets/..."
+        } elseif (Str::startsWith($p, 'storage/')) {
+            $p = substr($p, strlen('storage/'));        // → "assets/..."
         }
 
-        return $p;
+        return ltrim($p, '/');
     }
 }

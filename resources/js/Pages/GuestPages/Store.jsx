@@ -1,6 +1,7 @@
 // resources/js/Pages/GuestPages/Store.jsx
-import { useMemo, useState } from "react";
-import { Link, usePage } from "@inertiajs/react";
+import { useEffect, useState } from "react";
+import { Link, usePage, router } from "@inertiajs/react";
+import axios from "axios";
 import GuestLayout from "@/Layouts/GuestLayout";
 import HeroSlider from "@/Components/HeroSlider";
 
@@ -9,21 +10,11 @@ const PLACEHOLDER = "/Images/placeholder.png";
 /** Turn any value (absolute, /storage/..., assets/foo.png, or bare file.png) into a valid public URL. */
 function normalizeMediaUrl(u) {
   if (!u) return PLACEHOLDER;
-
-  // Absolute or already correct
   if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("/storage/")) return u;
-
-  // Remove leading slashes to unify handling
   const clean = u.replace(/^\/+/, "");
-
-  // Common stored forms
-  if (clean.startsWith("storage/")) return `/${clean}`;              // "storage/assets/abc.png"
-  if (clean.startsWith("assets/"))  return `/storage/${clean}`;      // "assets/abc.png"
-
-  // Bare filename like "abc.png" → assume it lives under "assets/"
+  if (clean.startsWith("storage/")) return `/${clean}`;
+  if (clean.startsWith("assets/")) return `/storage/${clean}`;
   if (/^[\w.-]+\.(png|jpe?g|webp|gif)$/i.test(clean)) return `/storage/assets/${clean}`;
-
-  // Anything else we route via /storage/ as a last resort
   return `/storage/${clean}`;
 }
 
@@ -37,79 +28,162 @@ function pickPrice(a) {
 /** Compute points with fallback to category default. */
 function pickPoints(a) {
   if (typeof a.points === "number") return a.points;
-  if (a?.category && typeof a.category.additional_points === "number") return a.category.additional_points;
+  if (a?.category && typeof a.category.additional_points === "number")
+    return a.category.additional_points;
   return null;
+}
+
+/** Normalize server payload to UI-friendly objects. Prefers backend-provided counts/avg. */
+function normalize(serverAssets = []) {
+  if (!Array.isArray(serverAssets)) return [];
+  return serverAssets.map((a, i) => {
+    const imageCand =
+      a.image_url ||
+      a.cover_image_path ||
+      a.file_path ||
+      (Array.isArray(a.sub_image_path) && a.sub_image_path[0]) ||
+      null;
+
+    const image = normalizeMediaUrl(imageCand);
+    const slug =
+      a.slug ||
+      (a.title ? a.title.toString().toLowerCase().replace(/\s+/g, "-") : String(a.id || i));
+
+    const commentsCount =
+      typeof a.comments_count === "number"
+        ? a.comments_count
+        : Array.isArray(a.comments)
+        ? a.comments.length
+        : 0;
+
+    const favoritesCount =
+      typeof a.favorites_count === "number"
+        ? a.favorites_count
+        : Array.isArray(a.favorites)
+        ? a.favorites.length
+        : 0;
+
+    const viewsCount =
+      typeof a.views_count === "number"
+        ? a.views_count
+        : Array.isArray(a.views)
+        ? a.views.length
+        : 0;
+
+    const avgRating =
+      typeof a.avg_rating === "number"
+        ? a.avg_rating
+        : Array.isArray(a.ratings) && a.ratings.length
+        ? a.ratings.reduce((t, r) => t + (Number(r.rating) || 0), 0) / a.ratings.length
+        : 0;
+
+    return {
+      id: a.id ?? i,
+      title: a.title ?? "Untitled Asset",
+      slug,
+      image,
+      description: a.description ?? null,
+      points: pickPoints(a),
+      price: pickPrice(a),
+      commentsCount,
+      favoritesCount,
+      viewsCount,
+      avgRating: Number(avgRating || 0),
+    };
+  });
 }
 
 export default function Store() {
   const { auth, assets: serverAssets = [] } = usePage().props;
   const [showFilters, setShowFilters] = useState(true);
 
-  // Normalize assets from server
-  const assets = useMemo(() => {
-    if (!Array.isArray(serverAssets)) return [];
-
-    return serverAssets.map((a, i) => {
-      // choose best candidate, then normalize to a public URL
-      const imageCand =
-        a.image_url ||
-        a.cover_image_path ||
-        a.file_path ||
-        (Array.isArray(a.sub_image_path) && a.sub_image_path[0]) ||
-        null;
-
-      const image = normalizeMediaUrl(imageCand);
-
-      const slug =
-        a.slug ||
-        (a.title ? a.title.toString().toLowerCase().replace(/\s+/g, "-") : String(a.id || i));
-
-      // counts (prefer *_count; else length)
-      const commentsCount =
-        typeof a.comments_count === "number"
-          ? a.comments_count
-          : Array.isArray(a.comments)
-          ? a.comments.length
-          : 0;
-
-      const favoritesCount =
-        typeof a.favorites_count === "number"
-          ? a.favorites_count
-          : Array.isArray(a.favorites)
-          ? a.favorites.length
-          : 0;
-
-      const viewsCount =
-        typeof a.views_count === "number"
-          ? a.views_count
-          : Array.isArray(a.views)
-          ? a.views.length
-          : 0;
-
-      const avgRating =
-        typeof a.avg_rating === "number"
-          ? a.avg_rating
-          : Array.isArray(a.ratings) && a.ratings.length
-          ? a.ratings.reduce((t, r) => t + (Number(r.rating) || 0), 0) / a.ratings.length
-          : 0;
-
-      return {
-        id: a.id ?? i,
-        title: a.title ?? "Untitled Asset",
-        slug,
-        image,
-        points: pickPoints(a),          // NEW: with fallback to category
-        price: pickPrice(a),            // NEW: with fallback to category
-        commentsCount,
-        favoritesCount,
-        viewsCount,
-        avgRating: Number(avgRating || 0),
-      };
-    });
+  // 🔄 stateful assets so we can optimistically update counts
+  const [assets, setAssets] = useState(() => normalize(serverAssets));
+  useEffect(() => {
+    setAssets(normalize(serverAssets));
   }, [serverAssets]);
 
   const formatPhp = (n) =>
     typeof n === "number" ? `₱${n.toLocaleString("en-PH", { maximumFractionDigits: 0 })}` : null;
+
+  /** POST /assets/{id}/views (used by the 👁️ button that does NOT navigate) */
+  function postView(assetId) {
+    // Public endpoint is CSRF-exempt; keep it simple.
+    const url = `/assets/${assetId}/views`;
+    return axios.post(url, new URLSearchParams().toString(), {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      withCredentials: true,
+    });
+  }
+
+  /**
+   * Fire-and-forget view ping that survives navigation.
+   * Uses form-encoded body for maximum compatibility with sendBeacon.
+   */
+  function beaconView(assetId) {
+    const url = `/assets/${assetId}/views`;
+    try {
+      const data = new URLSearchParams(); // CSRF-exempt; empty is fine
+      const ok = typeof navigator.sendBeacon === "function" && navigator.sendBeacon(url, data);
+
+      if (!ok) {
+        // Fallback for browsers that don't support sendBeacon or returned false
+        fetch(url, {
+          method: "POST",
+          keepalive: true,
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: data.toString(),
+        }).catch(() => {});
+      }
+    } catch {
+      // Final fallback
+      fetch(url, {
+        method: "POST",
+        keepalive: true,
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: "",
+      }).catch(() => {});
+    }
+  }
+
+  /** Card click: optimistic + sendBeacon, then navigate */
+  function handleCardClick(e, item) {
+    e.preventDefault();
+
+    // optimistic UI
+    setAssets((prev) =>
+      prev.map((a) => (a.id === item.id ? { ...a, viewsCount: (a.viewsCount || 0) + 1 } : a))
+    );
+
+    // POST that survives page unload
+    beaconView(item.id);
+
+    // go to details by slug
+    router.visit(`/assets/${item.slug}`);
+  }
+
+  /** 👁️ button inside the card (no navigation) */
+  async function handleViewButtonClick(assetId) {
+    try {
+      await postView(assetId);
+      setAssets((prev) =>
+        prev.map((a) => (a.id === assetId ? { ...a, viewsCount: (a.viewsCount || 0) + 1 } : a))
+      );
+    } catch (e) {
+      console.error("View count failed", e);
+    }
+  }
 
   return (
     <GuestLayout>
@@ -148,7 +222,9 @@ export default function Store() {
             </button>
           </div>
 
-          <div className={`${showFilters ? "block" : "hidden md:block"} space-y-5 max-h-[350px] overflow-y-auto pr-1`}>
+          <div
+            className={`${showFilters ? "block" : "hidden md:block"} space-y-5 max-h-[350px] overflow-y-auto pr-1`}
+          >
             {/* Category */}
             <div>
               <label className="block mb-1 text-sm font-semibold">Category</label>
@@ -164,16 +240,28 @@ export default function Store() {
             <div>
               <label className="block mb-1 text-sm font-semibold">Points Range</label>
               <div className="flex gap-2 items-center">
-                <input type="number" placeholder="Min" className="w-full px-2 py-1 rounded bg-[#001f35] border border-white/20 text-white" />
+                <input
+                  type="number"
+                  placeholder="Min"
+                  className="w-full px-2 py-1 rounded bg-[#001f35] border border-white/20 text-white"
+                />
                 <span className="text-white/50">-</span>
-                <input type="number" placeholder="Max" className="w-full px-2 py-1 rounded bg-[#001f35] border border-white/20 text-white" />
+                <input
+                  type="number"
+                  placeholder="Max"
+                  className="w-full px-2 py-1 rounded bg-[#001f35] border border-white/20 text-white"
+                />
               </div>
             </div>
 
             {/* Search */}
             <div>
               <label className="block mb-1 text-sm font-semibold">Search</label>
-              <input type="text" placeholder="Search assets..." className="w-full px-3 py-2 rounded bg-[#001f35] border border-white/20 text-white" />
+              <input
+                type="text"
+                placeholder="Search assets..."
+                className="w-full px-3 py-2 rounded bg-[#001f35] border border-white/20 text-white"
+              />
             </div>
 
             {/* Apply Button */}
@@ -196,20 +284,27 @@ export default function Store() {
               key={item.id}
               className="bg-[#002744] border border-white/20 rounded-lg overflow-hidden shadow-lg hover:scale-105 transition transform duration-200"
             >
-              <Link href={`/assets/${item.slug}`}>
+              <Link href={`/assets/${item.slug}`} onClick={(e) => handleCardClick(e, item)}>
                 <img
                   src={item.image}
                   alt={item.title}
                   className="w-full h-40 object-cover"
                   loading="lazy"
                   onError={(e) => {
-                    // Hard fallback if something still fails server-side
                     e.currentTarget.src = PLACEHOLDER;
                   }}
                 />
                 <div className="p-4 space-y-2">
                   <h3 className="font-bold text-lg">{item.title}</h3>
-                  <p className="text-sm text-white/70">High-quality asset preview with dynamic tags.</p>
+
+                  {/* Real description (clamped to 2 lines if present) */}
+                  {item.description ? (
+                    <p className="text-sm text-white/70 line-clamp-2">{item.description}</p>
+                  ) : (
+                    <p className="text-sm text-white/70">
+                      High-quality asset preview with dynamic tags.
+                    </p>
+                  )}
 
                   <div className="flex items-center justify-between text-sm mt-2">
                     {/* Points & Price */}
@@ -220,18 +315,26 @@ export default function Store() {
                         </span>
                       )}
                       {typeof item.price === "number" && (
-                        <span className="text-white/80">
-                          {formatPhp(item.price)}
-                        </span>
+                        <span className="text-white/80">{formatPhp(item.price)}</span>
                       )}
                     </div>
 
-                    {/* Live social proof from backend */}
+                    {/* Live social proof (views clickable too) */}
                     <div className="flex gap-3 text-white/70 text-xs items-center">
                       <span title="Average Rating">⭐ {item.avgRating.toFixed(1)}</span>
                       <span title="Favorites">❤️ {item.favoritesCount}</span>
                       <span title="Comments">💬 {item.commentsCount}</span>
-                      <span title="Views">👁️ {item.viewsCount}</span>
+                      <button
+                        type="button"
+                        title="Add a view"
+                        className="hover:text-white underline-offset-2"
+                        onClick={(e) => {
+                          e.preventDefault(); // stay on list page
+                          handleViewButtonClick(item.id);
+                        }}
+                      >
+                        👁️ {item.viewsCount}
+                      </button>
                     </div>
                   </div>
                 </div>

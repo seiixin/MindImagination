@@ -4,10 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Asset;
 use App\Models\AssetComment;
-use App\Models\AssetRating;
 use App\Models\AssetFavorite;
+use App\Models\AssetRating;
 use App\Models\AssetView;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AssetInteractionController extends Controller
 {
@@ -36,14 +37,11 @@ class AssetInteractionController extends Controller
                 'asset_id' => $asset->id,
                 'user_id'  => $request->user()->id,
                 'comment'  => $data['comment'],
-            ]);
-
-            // Load user for immediate UI display
-            $comment->load('user');
+            ])->load('user');
 
             return response()->json($comment, 201);
         } catch (\Throwable $e) {
-            \Log::error('commentsStore failed', ['e' => $e]);
+            Log::error('commentsStore failed', ['e' => $e]);
             return response()->json(['message' => 'Server error'], 500);
         }
     }
@@ -57,16 +55,10 @@ class AssetInteractionController extends Controller
         $comment = AssetComment::where('asset_id', $asset->id)->findOrFail($id);
         $this->authorize('update', $comment);
 
-        $data = $request->validate([
-            'comment' => 'required|string',
-        ]);
-
+        $data = $request->validate(['comment' => 'required|string']);
         $comment->update($data);
 
-        // Keep response consistent (with user)
-        $comment->load('user');
-
-        return response()->json($comment);
+        return response()->json($comment->load('user'));
     }
 
     public function commentsDestroy(Request $request, Asset $asset, $id)
@@ -77,7 +69,6 @@ class AssetInteractionController extends Controller
 
         $comment = AssetComment::where('asset_id', $asset->id)->findOrFail($id);
         $this->authorize('delete', $comment);
-
         $comment->delete();
 
         return response()->json(null, 204);
@@ -99,25 +90,19 @@ class AssetInteractionController extends Controller
             return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $data = $request->validate([
-            'rating' => 'required|integer|min:1|max:5',
-        ]);
+        $data = $request->validate(['rating' => 'required|integer|min:1|max:5']);
 
         try {
             $rating = AssetRating::updateOrCreate(
                 ['asset_id' => $asset->id, 'user_id' => $request->user()->id],
                 ['rating'   => (int) $data['rating']]
-            );
+            )->load('user');
 
-            // Fresh average for UI
             $avg = round((float) $asset->ratings()->avg('rating'), 1);
 
-            return response()->json([
-                'rating' => $rating->load('user'),
-                'avg'    => $avg,
-            ], 201);
+            return response()->json(['rating' => $rating, 'avg' => $avg], 201);
         } catch (\Throwable $e) {
-            \Log::error('ratingsStore failed', ['e' => $e]);
+            Log::error('ratingsStore failed', ['e' => $e]);
             return response()->json(['message' => 'Server error'], 500);
         }
     }
@@ -131,18 +116,12 @@ class AssetInteractionController extends Controller
         $rating = AssetRating::where('asset_id', $asset->id)->findOrFail($id);
         $this->authorize('update', $rating);
 
-        $data = $request->validate([
-            'rating' => 'required|integer|min:1|max:5',
-        ]);
-
+        $data = $request->validate(['rating' => 'required|integer|min:1|max:5']);
         $rating->update(['rating' => (int) $data['rating']]);
 
         $avg = round((float) $asset->ratings()->avg('rating'), 1);
 
-        return response()->json([
-            'rating' => $rating->load('user'),
-            'avg'    => $avg,
-        ]);
+        return response()->json(['rating' => $rating->load('user'), 'avg' => $avg]);
     }
 
     public function ratingsDestroy(Request $request, Asset $asset, $id)
@@ -153,14 +132,11 @@ class AssetInteractionController extends Controller
 
         $rating = AssetRating::where('asset_id', $asset->id)->findOrFail($id);
         $this->authorize('delete', $rating);
-
         $rating->delete();
 
         $avg = round((float) $asset->ratings()->avg('rating'), 1);
 
-        return response()->json([
-            'avg' => $avg,
-        ], 200);
+        return response()->json(['avg' => $avg], 200);
     }
 
     /*--------------------------------------------------------------
@@ -199,7 +175,6 @@ class AssetInteractionController extends Controller
             ->firstOrFail();
 
         $this->authorize('delete', $fav);
-
         $fav->delete();
 
         return response()->json(null, 204);
@@ -217,16 +192,14 @@ class AssetInteractionController extends Controller
 
     public function viewsStore(Request $request, Asset $asset)
     {
-        // If your /views route is in auth middleware this is always set,
-        // but this guard keeps behavior explicit (and safe).
-        $userId = optional($request->user())->id;
-
-        $view = AssetView::create([
-            'asset_id'  => $asset->id,
-            'user_id'   => $userId, // can be null if you later allow guests
-            'viewed_at' => now(),
-        ]);
-
-        return response()->json($view->load('user'), 201);
+        // Use the model-level helper so insertion logic lives in AssetView
+        // (handles guest/auth, session/ip, viewed_at, and de-dupe)
+        try {
+            $res = AssetView::recordUnique($asset, $request, 30); // 30-minute window
+            return response()->json(['ok' => true, 'deduped' => $res['deduped']]);
+        } catch (\Throwable $e) {
+            Log::error('viewsStore failed', ['e' => $e]);
+            return response()->json(['ok' => false, 'message' => 'Server error'], 500);
+        }
     }
 }

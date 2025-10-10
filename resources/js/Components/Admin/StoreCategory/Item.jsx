@@ -8,8 +8,8 @@ export default function Item() {
   const [items, setItems] = useState([]);
   const [detailId, setDetailId] = useState(null);
   const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(false);   // page-level loading
-  const [saving, setSaving] = useState(false);     // form saving state
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -20,14 +20,13 @@ export default function Item() {
     title: '',
     description: '',
     category_id: '',
-    price: '',              // NEW
-    points: '',             // NEW
+    price: '',
+    points: '',
     // file inputs (MUST match backend field names)
-    file_path: null,            // main image
-    cover_image_path: null,     // cover image
-    video_path: null,           // video file
-    sub_image_path: [],         // multiple images
-    download_file_path: null,   // downloadable file
+    file_path: null,          // main image
+    video_path: null,         // video file
+    sub_image_path: [],       // multiple images
+    download_file_path: null, // downloadable file
   });
 
   useEffect(() => {
@@ -41,7 +40,7 @@ export default function Item() {
       setError('');
       const res = await axios.get('/admin/assets');
       setItems(Array.isArray(res.data) ? res.data : []);
-    } catch (e) {
+    } catch {
       setError('Failed to load items');
     } finally {
       setLoading(false);
@@ -53,7 +52,7 @@ export default function Item() {
       const res = await axios.get('/admin/store-categories');
       setCategories(Array.isArray(res.data) ? res.data : []);
     } catch {
-      // ignore
+      /* ignore */
     }
   };
 
@@ -66,7 +65,6 @@ export default function Item() {
       price: '',
       points: '',
       file_path: null,
-      cover_image_path: null,
       video_path: null,
       sub_image_path: [],
       download_file_path: null,
@@ -88,10 +86,9 @@ export default function Item() {
       title: item.title || '',
       description: item.description || '',
       category_id: item.category_id || '',
-      price: item.price ?? '',     // NEW
-      points: item.points ?? '',   // NEW
+      price: item.price ?? '',
+      points: item.points ?? '',
       file_path: null,
-      cover_image_path: null,
       video_path: null,
       sub_image_path: [],
       download_file_path: null,
@@ -129,14 +126,19 @@ export default function Item() {
     [newItem.sub_image_path]
   );
 
-  // Helper: normalize media URLs if API returns "assets/..." instead of "/storage/assets/..."
+  // Normalize media URLs
   const normalizeMediaUrl = (u) => {
     if (!u) return null;
     if (u.startsWith('http://') || u.startsWith('https://')) return u;
     if (u.startsWith('/storage/')) return u;
-    const cleaned = u.replace(/^\/+/, ''); // strip leading slash
+    const cleaned = u.replace(/^\/+/, '');
     if (cleaned.startsWith('assets/')) return `/storage/${cleaned}`;
-    return u; // fall back as-is
+    return u;
+  };
+
+  const firstSubImageUrl = (item) => {
+    const arr = Array.isArray(item?.sub_image_path) ? item.sub_image_path : [];
+    return normalizeMediaUrl(arr[0] || null);
   };
 
   // Add / Update
@@ -155,12 +157,10 @@ export default function Item() {
       formData.append('description', newItem.description || '');
       formData.append('category_id', newItem.category_id || '');
 
-      // NEW: price & points (only send if provided; backend has defaults)
       if (newItem.price !== '' && newItem.price != null) formData.append('price', newItem.price);
       if (newItem.points !== '' && newItem.points != null) formData.append('points', newItem.points);
 
       if (newItem.file_path)          formData.append('file_path', newItem.file_path);
-      if (newItem.cover_image_path)   formData.append('cover_image_path', newItem.cover_image_path);
       if (newItem.video_path)         formData.append('video_path', newItem.video_path);
       if (newItem.download_file_path) formData.append('download_file_path', newItem.download_file_path);
       if (newItem.sub_image_path?.length) {
@@ -270,7 +270,7 @@ export default function Item() {
             </div>
           )}
 
-          {/* NEW: Price & Points overrides */}
+          {/* Price & Points */}
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium">Price (override)</label>
@@ -284,9 +284,7 @@ export default function Item() {
                 onChange={handleChange}
                 disabled={saving}
               />
-              <p className="text-xs text-gray-600 mt-1">
-                Leave blank to use category default.
-              </p>
+              <p className="text-xs text-gray-600 mt-1">Leave blank to use category default.</p>
             </div>
             <div>
               <label className="text-sm font-medium">Points (override)</label>
@@ -299,9 +297,7 @@ export default function Item() {
                 onChange={handleChange}
                 disabled={saving}
               />
-              <p className="text-xs text-gray-600 mt-1">
-                Leave blank to use category default.
-              </p>
+              <p className="text-xs text-gray-600 mt-1">Leave blank to use category default.</p>
             </div>
           </div>
 
@@ -317,20 +313,6 @@ export default function Item() {
           />
           {imgPreview(newItem.file_path) && (
             <img src={imgPreview(newItem.file_path)} alt="preview" className="w-full h-40 object-cover rounded-lg" />
-          )}
-
-          {/* Cover image */}
-          <label className="text-sm">Cover image (cover_image_path)</label>
-          <input
-            type="file"
-            name="cover_image_path"
-            accept="image/*"
-            className="w-full p-2 rounded-lg bg-white"
-            onChange={handleChange}
-            disabled={saving}
-          />
-          {imgPreview(newItem.cover_image_path) && (
-            <img src={imgPreview(newItem.cover_image_path)} alt="preview" className="w-full h-40 object-cover rounded-lg" />
           )}
 
           {/* Video */}
@@ -423,7 +405,8 @@ export default function Item() {
           <div className="col-span-full text-center text-gray-600">Loading…</div>
         ) : (
           visibleItems.map((item) => {
-            const imgSrc = normalizeMediaUrl(item.file_path) || normalizeMediaUrl(item.cover_image_path);
+            // cover_image_path removed; fall back to first sub image
+            const imgSrc = normalizeMediaUrl(item.file_path) || firstSubImageUrl(item);
             const price = priceOf(item);
             const pts = pointsOf(item);
 

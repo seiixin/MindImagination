@@ -9,5 +9,6 @@ class VerifyCsrfToken extends Middleware
     protected $except = [
         'admin/backups',
         'admin/backups/*',
+        'assets/*/views',
     ];
 }
