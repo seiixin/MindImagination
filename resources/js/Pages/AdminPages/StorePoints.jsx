@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+// resources/js/Pages/AdminPages/StorePoints.jsx
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import AdminLayout from '@/Layouts/AdminLayout';
+
+const PLACEHOLDER = '/images/placeholder.png';
 
 export default function StorePoints() {
   const neuShadow = 'shadow-[8px_8px_15px_#bebebe,-8px_-8px_15px_#ffffff]';
@@ -15,34 +18,34 @@ export default function StorePoints() {
   const [plans, setPlans] = useState([]);
   const [search, setSearch] = useState('');
   const [isEditing, setIsEditing] = useState(false);
-  const [form, setForm] = useState({ id: null, name: '', points: '', price: '', image_url: '' });
   const [loading, setLoading] = useState(false);
 
+  // Form state
+  const [form, setForm] = useState({ id: null, name: '', points: '', price: '', image_url: '' });
+  const [imageFile, setImageFile] = useState(null);     // selected file (optional)
+  const [imagePreview, setImagePreview] = useState(''); // object URL or typed URL for preview only
+  const fileRef = useRef(null);
 
+  // Optional (debug/metrics surface)
+  const [availablePoints, setAvailablePoints] = useState(0);
+
+  // ✅ LOAD KEYS + PLANS ON MOUNT
   useEffect(() => {
-    const load = async () => {
+    (async () => {
       try {
         const [keysRes, plansRes] = await Promise.all([
           axios.get('/admin/store-points/keys'),
           axios.get('/admin/store-plans'),
         ]);
-
-        setPaymongoPublic(keysRes.data.public || '');
-        setPaymongoSecret(keysRes.data.secret || '');
-
+        setPaymongoPublic(keysRes.data?.public || '');
+        setPaymongoSecret(keysRes.data?.secret || '');
         const list = Array.isArray(plansRes.data) ? plansRes.data : (plansRes.data?.plans || []);
         setPlans(list);
-
-        try {
-          const bal = await axios.get('/admin/store-points/available');
-          setAvailablePoints(Number(bal?.data?.points || 0));
-        } catch {}
       } catch (e) {
         console.error(e);
         alert('Failed to load admin Store Points data.');
       }
-    };
-    load();
+    })();
   }, []);
 
   const filtered = useMemo(() => {
@@ -71,21 +74,49 @@ export default function StorePoints() {
   =============================== */
   const startAdd = () => {
     setForm({ id: null, name: '', points: '', price: '', image_url: '' });
+    setImageFile(null);
+    setImagePreview('');
     setIsEditing(true);
   };
+
   const startEdit = (p) => {
     setForm({
       id: p.id,
       name: p.name || '',
       points: String(p.points ?? ''),
       price: String(p.price ?? ''),
-      image_url: p.image_url || '',
+      image_url: p.image_url || '', // computed from backend accessor
     });
+    setImageFile(null);
+    setImagePreview(p.image_url || '');
     setIsEditing(true);
   };
+
   const cancelEdit = () => {
     setIsEditing(false);
+    setLoading(false);
     setForm({ id: null, name: '', points: '', price: '', image_url: '' });
+    setImageFile(null);
+    setImagePreview('');
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Browse image button -> hidden input
+  const onPickImage = () => fileRef.current?.click();
+
+  const onFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    const url = URL.createObjectURL(file);
+    setImagePreview(url);
+    // Keep form.image_url as-is; backend will use uploaded file when available
+  };
+
+  const clearPickedImage = () => {
+    setImageFile(null);
+    setImagePreview(form.image_url || '');
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   const savePlan = async () => {
@@ -96,17 +127,54 @@ export default function StorePoints() {
     if (!Number.isFinite(points) || points < 0) return alert('Points must be a non-negative number.');
     if (!Number.isFinite(price) || price < 0) return alert('Price must be a non-negative number.');
 
-    const payload = { name, points, price, image_url: form.image_url?.trim() || '' };
     setLoading(true);
     try {
-      if (form.id) {
-        await axios.put(`/admin/store-plans/${form.id}`, payload);
-        setPlans(prev => prev.map(x => (x.id === form.id ? { ...x, ...payload } : x)));
+      let createdOrUpdated;
+
+      if (imageFile) {
+        // Multipart with image file
+        const fd = new FormData();
+        fd.append('name', name);
+        fd.append('points', String(points));
+        fd.append('price', String(price));
+        if (form.image_url?.trim()) fd.append('image_url', form.image_url.trim()); // optional direct URL
+        fd.append('image_file', imageFile);
+
+        if (form.id) {
+          fd.append('_method', 'PUT');
+          const res = await axios.post(`/admin/store-plans/${form.id}`, fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          createdOrUpdated = res?.data?.plan || res?.data;
+        } else {
+          const res = await axios.post('/admin/store-plans', fd, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          createdOrUpdated = res?.data?.plan || res?.data;
+        }
       } else {
-        const res = await axios.post('/admin/store-plans', payload);
-        const created = res?.data?.plan || res?.data || { ...payload, id: Math.random().toString(36).slice(2) };
-        setPlans(prev => [created, ...prev]);
+        // JSON-only; only include image_url if non-empty to avoid unintended clearing
+        const payload = { name, points, price };
+        if (form.image_url?.trim()) payload.image_url = form.image_url.trim();
+
+        if (form.id) {
+          const res = await axios.put(`/admin/store-plans/${form.id}`, payload);
+          createdOrUpdated = res?.data?.plan || res?.data || { ...payload, id: form.id };
+        } else {
+          const res = await axios.post('/admin/store-plans', payload);
+          createdOrUpdated = res?.data?.plan || res?.data || { ...payload, id: Math.random().toString(36).slice(2) };
+        }
       }
+
+      if (createdOrUpdated?.id) {
+        // Trust backend’s fresh() + appended image_url for rendering
+        setPlans(prev =>
+          form.id
+            ? prev.map(x => (x.id === createdOrUpdated.id ? { ...x, ...createdOrUpdated } : x))
+            : [createdOrUpdated, ...prev]
+        );
+      }
+
       cancelEdit();
     } catch (e) {
       console.error(e);
@@ -139,7 +207,7 @@ export default function StorePoints() {
       const srcRes = await axios.post('/admin/store-points/source', {
         amount: amountCentavos,
         type: 'gcash',
-        mode: 'test', // force TEST secret on backend
+        mode: 'test',
         metadata: { plan_id: p.id, plan_name: p.name, points: p.points },
       });
       const checkoutUrl = srcRes?.data?.data?.attributes?.redirect?.checkout_url;
@@ -150,6 +218,18 @@ export default function StorePoints() {
       alert('Failed to create payment source.');
     }
   };
+
+  // Safe image display with fallback
+  const PlanImage = ({ src, alt }) => (
+    <img
+      src={src || PLACEHOLDER}
+      alt={alt}
+      className="w-full h-full object-cover"
+      onError={(e) => {
+        if (e.currentTarget.src !== PLACEHOLDER) e.currentTarget.src = PLACEHOLDER;
+      }}
+    />
+  );
 
   return (
     <AdminLayout>
@@ -212,53 +292,105 @@ export default function StorePoints() {
             <div className={`${neuShadow} bg-gray-200 p-5 rounded-lg space-y-4`}>
               <h3 className="text-base font-bold uppercase text-gray-700">{form.id ? 'Edit Plan' : 'Add Plan'}</h3>
 
-              <div className="grid sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="font-medium text-gray-700">Name</label>
+              <div className="space-y-3">
+                {/* Name */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="sm:w-44 font-medium text-gray-700">Name</label>
                   <input
                     type="text"
                     value={form.name}
                     onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))}
-                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none`}
+                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none flex-1`}
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="font-medium text-gray-700">Points</label>
+                {/* Points */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="sm:w-44 font-medium text-gray-700">Points</label>
                   <input
                     type="number"
                     inputMode="numeric"
                     value={form.points}
                     onChange={(e) => setForm(f => ({ ...f, points: e.target.value }))}
-                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none`}
+                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none flex-1`}
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="font-medium text-gray-700">Price (PHP)</label>
+                {/* Price */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="sm:w-44 font-medium text-gray-700">Price (PHP)</label>
                   <input
                     type="number"
                     step="0.01"
                     inputMode="decimal"
                     value={form.price}
                     onChange={(e) => setForm(f => ({ ...f, price: e.target.value }))}
-                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none`}
+                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none flex-1`}
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="font-medium text-gray-700">Image URL (optional)</label>
-                  <input
-                    type="url"
-                    value={form.image_url}
-                    onChange={(e) => setForm(f => ({ ...f, image_url: e.target.value }))}
-                    className={`${neuShadow} bg-white p-3 rounded-lg outline-none`}
-                    placeholder="https://..."
-                  />
+                {/* Image URL + Browse */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <label className="sm:w-44 font-medium text-gray-700">Image</label>
+
+                  <div className="flex-1 grid gap-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={form.image_url}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setForm(f => ({ ...f, image_url: v }));
+                          if (!imageFile) setImagePreview(v || '');
+                        }}
+                        className={`${neuShadow} bg-white p-3 rounded-lg outline-none flex-1`}
+                        placeholder="https://..."
+                      />
+                      <input
+                        ref={fileRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={onFileSelect}
+                      />
+                      <button
+                        type="button"
+                        onClick={onPickImage}
+                        className={`${neuShadow} bg-gray-200 px-4 py-2 rounded-lg font-semibold shrink-0`}
+                        title="Browse image from your computer"
+                      >
+                        Browse…
+                      </button>
+                      {imageFile && (
+                        <button
+                          type="button"
+                          onClick={clearPickedImage}
+                          className={`${neuShadow} bg-red-200 text-red-800 px-4 py-2 rounded-lg font-semibold shrink-0`}
+                          title="Clear selected image"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Preview */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-32 h-20 rounded-xl overflow-hidden bg-gray-300">
+                        {imagePreview ? (
+                          <PlanImage src={imagePreview} alt="Preview" />
+                        ) : (
+                          <div className="w-full h-full grid place-items-center text-xs text-gray-600">No Image</div>
+                        )}
+                      </div>
+                      <span className="text-xs text-gray-600">
+                        You can paste a direct image URL or browse a file. If a file is chosen, it will be uploaded when you save.
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center pt-2">
                 <span className={`${neuShadow} bg-gray-200 px-4 py-2 rounded-lg`}>{form.id ? `ID: ${form.id}` : 'New'}</span>
                 <div className="flex gap-2">
                   <button onClick={cancelEdit} className={`${neuShadow} bg-gray-200 px-5 py-2 rounded-full font-semibold`}>Cancel</button>
@@ -277,10 +409,10 @@ export default function StorePoints() {
             {filtered.map((p) => (
               <div key={p.id} className="py-4">
                 <div className="flex items-center gap-4">
-                  {/* Image */}
+                  {/* Image (USE computed p.image_url) */}
                   <div className="w-28 h-20 rounded-xl overflow-hidden bg-gray-300 shrink-0">
                     {p.image_url ? (
-                      <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                      <PlanImage src={p.image_url} alt={p.name} />
                     ) : (
                       <div className="w-full h-full grid place-items-center text-xs text-gray-600">No Image</div>
                     )}

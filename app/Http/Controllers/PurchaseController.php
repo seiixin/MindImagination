@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Setting;
 use App\Models\StorePlan;
-use App\Models\Setting; // fallback for keys saved in DB
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -12,20 +12,32 @@ use Inertia\Inertia;
 class PurchaseController extends Controller
 {
     /**
-     * Load PayMongo secret from config or from settings table.
+     * Prefer secret from config/services.php; fallback to DB settings.
      */
     protected function paymongoSecret(): ?string
     {
-        $fromConfig = config('services.paymongo.secret_key');
-        if (!empty($fromConfig)) {
-            return $fromConfig;
-        }
+        $fromConfig = config('services.paymongo.secret_key'); // e.g. env('PAYMONGO_SECRET')
+        if (!empty($fromConfig)) return $fromConfig;
+
         return (string) (Setting::where('name', 'paymongo_secret')->value('value') ?? '');
     }
 
     /**
+     * Success and failure redirect URLs for PayMongo sources.
+     */
+    protected function successUrl(): string
+    {
+        return url('/payment-success');
+    }
+
+    protected function failedUrl(): string
+    {
+        return url('/payment-failed');
+    }
+
+    /**
      * GET /buy-points
-     * Send plans only (no purchases history).
+     * Sends ACTIVE plans only. Ensures computed image_url is present and hides raw image_path.
      */
     public function index(Request $request)
     {
@@ -33,25 +45,38 @@ class PurchaseController extends Controller
 
         $plans = StorePlan::where('active', true)
             ->orderBy('price')
-            ->get(['id', 'name as title', 'points', 'price', 'image_url']);
+            ->get();                        // fetch full models
+        $plans->each->append('image_url'); // guarantee accessor in JSON
+        $plans->makeHidden(['image_path']); // keep payload lean
+
+        // Frontend normalizes labels; we may provide 'title' to be extra-friendly
+        $plans = $plans->map(function ($p) {
+            return [
+                'id'        => $p->id,
+                'name'      => $p->name,
+                'title'     => $p->name,         // optional convenience for UI
+                'points'    => (int) $p->points,
+                'price'     => (float) $p->price,
+                'image_url' => $p->image_url,    // computed (file or external URL)
+                'active'    => (bool) $p->active,
+            ];
+        });
 
         return Inertia::render('UserPages/PurchasePoints', [
             'auth'  => ['user' => $user->only(['id','name','points','email'])],
             'plans' => $plans,
         ]);
-        // Make sure your component exists at:
-        // resources/js/Pages/UserPages/PurchasePoints.jsx
     }
 
     /**
      * POST /paymongo/source
-     * Body: { plan_id:int, type:string } (e.g. 'gcash', 'grab_pay')
+     * Body: { plan_id:int, type:string }  // e.g. 'gcash', 'grab_pay'
      */
     public function createSource(Request $request)
     {
         $data = $request->validate([
             'plan_id' => ['required', 'exists:store_plans,id'],
-            'type'    => ['required', 'string'],
+            'type'    => ['required', 'string', 'in:gcash,grab_pay'],
         ]);
 
         $secretKey = $this->paymongoSecret();
@@ -62,7 +87,6 @@ class PurchaseController extends Controller
         $plan = StorePlan::findOrFail($data['plan_id']);
         $amountCentavos = (int) round(((float) $plan->price) * 100);
 
-        // PayMongo requires flat string metadata values.
         $payload = [
             'data' => [
                 'attributes' => [
@@ -70,21 +94,24 @@ class PurchaseController extends Controller
                     'currency' => 'PHP',
                     'type'     => $data['type'],
                     'redirect' => [
-                        'success' => url('/payment-success'),
-                        'failed'  => url('/payment-failed'),
+                        'success' => $this->successUrl(),
+                        'failed'  => $this->failedUrl(),
                     ],
+                    // PayMongo metadata must be strings
                     'metadata' => [
-                        'purpose'  => 'points_topup',
-                        'user_id'  => (string) $request->user()->id,
-                        'plan_id'  => (string) $plan->id,
-                        'plan_pts' => (string) ((int) $plan->points),
-                        'plan_php' => number_format((float) $plan->price, 2, '.', ''),
+                        'purpose'   => 'points_topup',
+                        'user_id'   => (string) $request->user()->id,
+                        'plan_id'   => (string) $plan->id,
+                        'plan_name' => (string) $plan->name,
+                        'plan_pts'  => (string) ((int) $plan->points),
+                        'plan_php'  => number_format((float) $plan->price, 2, '.', ''),
                     ],
                 ],
             ],
         ];
 
         $resp = Http::withBasicAuth($secretKey, '')
+            ->acceptJson()
             ->post('https://api.paymongo.com/v1/sources', $payload);
 
         return response()->json($resp->json(), $resp->status());
@@ -94,8 +121,8 @@ class PurchaseController extends Controller
      * POST /paymongo/payment
      * Body: { source_id:string }
      *
-     * Fetch the source (for amount/metadata), create the payment,
-     * and on 'paid' credit the user's points. DOES NOT write to purchases table.
+     * Retrieves the source, creates the payment, and on 'paid' credits the user's points.
+     * (Does not persist to a purchases table here.)
      */
     public function createPayment(Request $request)
     {
@@ -108,8 +135,9 @@ class PurchaseController extends Controller
             return response()->json(['message' => 'PayMongo secret key is not configured.'], 500);
         }
 
-        // 1) Retrieve Source details
+        // 1) Retrieve Source
         $srcResp = Http::withBasicAuth($secretKey, '')
+            ->acceptJson()
             ->get("https://api.paymongo.com/v1/sources/{$data['source_id']}");
 
         if (!$srcResp->successful()) {
@@ -148,13 +176,14 @@ class PurchaseController extends Controller
         ];
 
         $payResp = Http::withBasicAuth($secretKey, '')
+            ->acceptJson()
             ->post('https://api.paymongo.com/v1/payments', $payPayload);
 
         $body = $payResp->json();
         $paid = data_get($body, 'data.attributes.status') === 'paid';
 
         if ($payResp->successful() && $paid) {
-            // 3) Credit points (no purchases insert)
+            // 3) Credit points
             DB::transaction(function () use ($request, $planIdMeta, $amount) {
                 $user = $request->user();
 
@@ -180,9 +209,12 @@ class PurchaseController extends Controller
         ], $payResp->status() ?: 422);
     }
 
-    // Make sure these match your component paths:
-    // resources/js/Pages/UserPages/PaymentSuccess.jsx
-    // resources/js/Pages/UserPages/PaymentFailed.jsx
+    /**
+     * Inertia pages for final redirects.
+     * Ensure components exist at:
+     *  - resources/js/Pages/UserPages/StorePoints/PaymentSuccess.jsx
+     *  - resources/js/Pages/UserPages/StorePoints/PaymentFailed.jsx
+     */
     public function success()
     {
         return Inertia::render('UserPages/StorePoints/PaymentSuccess');
