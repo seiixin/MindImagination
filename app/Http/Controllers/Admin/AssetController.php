@@ -19,7 +19,10 @@ class AssetController extends Controller
     public function index()
     {
         $items = Asset::with(['category', 'comments', 'views', 'ratings', 'favorites'])->get();
-        $items = $items->map(fn ($a) => $this->transformAsset($a));
+
+        // Admin endpoints: can always view maintenance
+        $items = $items->map(fn ($a) => $this->transformAsset($a, true));
+
         return response()->json($items);
     }
 
@@ -63,21 +66,21 @@ class AssetController extends Controller
             $slug = $base;
             $i = 1;
             while (Asset::where('slug', $slug)->exists()) {
-                $slug = $base.'-'.$i++;
+                $slug = $base . '-' . $i++;
             }
             $data['slug'] = $slug;
         }
 
-        // Because Asset::$casts has sub_image_path => 'array', passing an array is correct.
         $asset = Asset::create($data)->load(['category', 'comments', 'views', 'ratings', 'favorites']);
 
-        return response()->json($this->transformAsset($asset), 201);
+        // Admin endpoint => can view maintenance
+        return response()->json($this->transformAsset($asset, true), 201);
     }
 
     public function show(Asset $asset)
     {
         $asset->load(['category', 'comments', 'views', 'ratings', 'favorites']);
-        return response()->json($this->transformAsset($asset));
+        return response()->json($this->transformAsset($asset, true)); // admin => true
     }
 
     public function update(Request $request, Asset $asset)
@@ -132,7 +135,7 @@ class AssetController extends Controller
             $slug = $base;
             $i = 1;
             while (Asset::where('slug', $slug)->where('id', '!=', $asset->id)->exists()) {
-                $slug = $base.'-'.$i++;
+                $slug = $base . '-' . $i++;
             }
             $data['slug'] = $slug;
         }
@@ -140,7 +143,7 @@ class AssetController extends Controller
         $asset->update($data);
         $asset->load(['category', 'comments', 'views', 'ratings', 'favorites']);
 
-        return response()->json($this->transformAsset($asset));
+        return response()->json($this->transformAsset($asset, true)); // admin => true
     }
 
     public function destroy(Asset $asset)
@@ -160,6 +163,7 @@ class AssetController extends Controller
             'views',
             'ratings',
             'favorites',
+            'owners',
         ]);
 
         $asset = Schema::hasColumn('assets', 'slug')
@@ -178,7 +182,29 @@ class AssetController extends Controller
 
         if (!$asset) abort(404);
 
-        $arr = $this->transformAsset($asset);
+        // ---- gating: admin or owner can view maintenance ----
+        $user = auth()->user();
+        $isAdmin = $user && (
+            (isset($user->is_admin) && $user->is_admin) ||
+            (method_exists($user, 'isAdmin') && $user->isAdmin()) ||
+            (method_exists($user, 'hasRole') && $user->hasRole('admin')) ||
+            (method_exists($user, 'can') && $user->can('admin'))
+        );
+
+        $isOwner = $user
+            ? $asset->owners()->where('users.id', $user->id)->exists()
+            : false;
+
+        $canViewMaintenance = $isAdmin || $isOwner;
+
+        // build payload; transformAsset() already sets can_view_maintenance + (cost when allowed)
+        $arr = $this->transformAsset($asset, $canViewMaintenance);
+
+        // also expose explicit flags
+        $arr['owned'] = $isOwner;
+        $arr['can_view_maintenance'] = $canViewMaintenance;
+
+        // extra counters/fields
         $arr['views_count']     = $asset->views()->count();
         $arr['favorites_count'] = $asset->favorites()->count();
         $arr['comments_count']  = $asset->comments()->count();
@@ -186,22 +212,36 @@ class AssetController extends Controller
         $arr['slug']            = $asset->slug ?? Str::slug($asset->title ?? (string) $asset->id);
 
         return Inertia::render('UserPages/AssetDetails', [
-            'asset' => $arr,
-            'auth'  => ['user' => auth()->user()],
+            'asset'                 => $arr,
+            'auth'                  => ['user' => $user],
+            // top-level mirrors (optional, handy in the page component)
+            'owned'                 => $isOwner,
+            'can_view_maintenance'  => $canViewMaintenance,
         ]);
     }
 
     /* ===================== Helpers ===================== */
 
-    private function transformAsset(Asset $asset): array
+    /**
+     * Build an asset array with normalized URLs and (optionally) maintenance fields.
+     *
+     * @param  Asset  $asset
+     * @param  bool|null $canViewMaintenance  If null => default true (admin endpoints).
+     */
+    private function transformAsset(Asset $asset, ?bool $canViewMaintenance = null): array
     {
+        // Default to true for admin JSON endpoints
+        $can = $canViewMaintenance ?? true;
+
+        // Start from model array (includes $appends like image_url, is_premium, has_maintenance if set)
         $arr = $asset->toArray();
 
+        // Normalize file-like fields to public URLs
         foreach (['file_path', 'cover_image_path', 'video_path', 'download_file_path'] as $field) {
             $arr[$field] = $this->toPublicUrl($asset->{$field});
         }
 
-        // sub images
+        // Sub images → public URLs
         $sub = $asset->sub_image_path;
         if (!is_array($sub)) {
             $raw = $asset->getRawOriginal('sub_image_path');
@@ -209,6 +249,20 @@ class AssetController extends Controller
             $sub = is_array($decoded) ? $decoded : [];
         }
         $arr['sub_image_path'] = array_map(fn ($p) => $this->toPublicUrl($p), $sub);
+
+        // Maintenance gating
+        $cost = (float) ($asset->maintenance_cost ?? 0);
+        $has  = $cost > 0;
+
+        $arr['can_view_maintenance'] = (bool) $can;
+        if ($can) {
+            $arr['maintenance_cost'] = $cost;
+            $arr['has_maintenance']  = $has;
+        } else {
+            // Hide cost; ensure boolean is false when not allowed
+            unset($arr['maintenance_cost']);
+            $arr['has_maintenance'] = false;
+        }
 
         return $arr;
     }

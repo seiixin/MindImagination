@@ -37,6 +37,13 @@ class Asset extends Model
         'is_featured'      => 'boolean',
     ];
 
+    // Make computed attributes show up in arrays/JSON
+    protected $appends = [
+        'image_url',
+        'is_premium',
+        'has_maintenance',
+    ];
+
     /* ----------------------------------------------------------------------
      | Relationships
      * ---------------------------------------------------------------------- */
@@ -60,7 +67,6 @@ class Asset extends Model
 
     /**
      * Users who currently own this asset (completed + not revoked).
-     * Useful for admin stats or entitlement checks.
      */
     public function owners()
     {
@@ -122,6 +128,12 @@ class Asset extends Model
     public function getIsPremiumAttribute(): bool
     {
         return (float) $this->price > 0 || (int) $this->points > 0;
+    }
+
+    /** NEW: flag to show maintenance badge */
+    public function getHasMaintenanceAttribute(): bool
+    {
+        return (float) ($this->maintenance_cost ?? 0) > 0;
     }
 
     // Optional helpers you already had

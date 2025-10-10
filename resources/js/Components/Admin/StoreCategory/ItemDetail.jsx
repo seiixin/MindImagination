@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { X, Eye, Heart, Star, GaugeCircle, Coins } from 'lucide-react';
+import { X, Eye, Heart, Star, GaugeCircle, Coins, Wrench } from 'lucide-react';
 
 export default function ItemDetail({ itemId, onClose }) {
   const [item, setItem] = useState(null);
@@ -24,20 +24,19 @@ export default function ItemDetail({ itemId, onClose }) {
   if (loading) return <p className="text-gray-300">Loading...</p>;
   if (!item) return <p className="text-gray-300">No details.</p>;
 
-  // Prefer per-asset values; fall back to category defaults if needed
-  const priceDisplay = Number(
-    item?.price ?? item?.category?.purchase_cost ?? 0
-  );
-  const pointsDisplay =
-    item?.points ?? item?.category?.additional_points ?? 0;
+  // Prefer per-asset; fall back to category defaults
+  const priceDisplay = Number(item?.price ?? item?.category?.purchase_cost ?? 0);
+  const pointsDisplay = Number(item?.points ?? item?.category?.additional_points ?? 0);
+
+  const maintCost = Number(item?.maintenance_cost ?? 0);
+  const hasMaintenance = Boolean(item?.has_maintenance || maintCost > 0);
 
   const viewsCount = item?.views?.length ?? 0;
   const favoritesCount = item?.favorites?.length ?? 0;
   const ratingsCount = item?.ratings?.length ?? 0;
-  const avgRating =
-    ratingsCount
-      ? (item.ratings.reduce((t, r) => t + (r.rating || 0), 0) / ratingsCount).toFixed(1)
-      : '0.0';
+  const avgRating = ratingsCount
+    ? (item.ratings.reduce((t, r) => t + (r.rating || 0), 0) / ratingsCount).toFixed(1)
+    : '0.0';
 
   const hasSubImages = Array.isArray(item?.sub_image_path) && item.sub_image_path.length > 0;
 
@@ -46,7 +45,7 @@ export default function ItemDetail({ itemId, onClose }) {
       <div className="w-full max-w-3xl rounded-3xl shadow-2xl bg-[#334155]/60 border border-[#475569]/30 p-6 text-gray-100">
         <div className="flex justify-between items-center mb-4 sticky top-0 bg-[#334155]/60 backdrop-blur-md p-2 rounded-xl">
           <h2 className="text-2xl font-bold drop-shadow">{item.title}</h2>
-          <button onClick={onClose} className="hover:scale-105 transition-transform">
+          <button onClick={onClose} className="hover:scale-105 transition-transform" aria-label="Close">
             <X size={24} />
           </button>
         </div>
@@ -96,7 +95,7 @@ export default function ItemDetail({ itemId, onClose }) {
           </div>
         )}
 
-        {/* Price & Points */}
+        {/* Price & Points (with Maintenance chip beside Points) */}
         <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="flex items-center gap-2 bg-[#475569]/50 p-3 rounded-xl">
             <Coins size={18} />
@@ -109,6 +108,17 @@ export default function ItemDetail({ itemId, onClose }) {
             <span className="opacity-80">
               <strong>Points:</strong> {pointsDisplay}
             </span>
+
+            {hasMaintenance && (
+              <span
+                className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-fuchsia-200 text-fuchsia-900 font-semibold"
+                title={`Maintenance cost: ${maintCost} pts`}
+              >
+                <Wrench size={14} />
+                MAINTENANCE
+                <span className="ml-1 text-xs opacity-80">({maintCost} pts)</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -123,7 +133,7 @@ export default function ItemDetail({ itemId, onClose }) {
           <div className="flex items-center gap-1"><GaugeCircle size={16} /> {avgRating}</div>
         </div>
 
-        {/* Optional: show category info for context */}
+        {/* Optional: category context */}
         {item?.category && (
           <div className="mb-6 text-sm opacity-80">
             <p><strong>Category:</strong> {item.category.name}</p>

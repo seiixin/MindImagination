@@ -22,6 +22,7 @@ export default function Item() {
     category_id: '',
     price: '',
     points: '',
+    maintenance_cost: '',     // NEW
     // file inputs (MUST match backend field names)
     file_path: null,          // main image
     video_path: null,         // video file
@@ -64,6 +65,7 @@ export default function Item() {
       category_id: '',
       price: '',
       points: '',
+      maintenance_cost: '',
       file_path: null,
       video_path: null,
       sub_image_path: [],
@@ -77,7 +79,7 @@ export default function Item() {
     resetForm();
   };
 
-  // Edit existing item — reset file inputs, keep text/category + price/points
+  // Edit existing item — reset file inputs, keep text/category + price/points/maintenance
   const handleEdit = (item) => {
     setShowForm(true);
     setError('');
@@ -88,6 +90,7 @@ export default function Item() {
       category_id: item.category_id || '',
       price: item.price ?? '',
       points: item.points ?? '',
+      maintenance_cost: item.maintenance_cost ?? '',
       file_path: null,
       video_path: null,
       sub_image_path: [],
@@ -159,6 +162,9 @@ export default function Item() {
 
       if (newItem.price !== '' && newItem.price != null) formData.append('price', newItem.price);
       if (newItem.points !== '' && newItem.points != null) formData.append('points', newItem.points);
+      if (newItem.maintenance_cost !== '' && newItem.maintenance_cost != null) {
+        formData.append('maintenance_cost', newItem.maintenance_cost);
+      }
 
       if (newItem.file_path)          formData.append('file_path', newItem.file_path);
       if (newItem.video_path)         formData.append('video_path', newItem.video_path);
@@ -212,6 +218,7 @@ export default function Item() {
     const n = v === null || v === undefined || v === '' ? fallback : Number(v);
     return isNaN(n) ? 0 : n;
   };
+  const maintenanceOf = (item) => Number(item?.maintenance_cost ?? 0);
 
   return (
     <div className="space-y-4">
@@ -270,8 +277,8 @@ export default function Item() {
             </div>
           )}
 
-          {/* Price & Points */}
-          <div className="grid sm:grid-cols-2 gap-3">
+          {/* Price, Points & Maintenance */}
+          <div className="grid sm:grid-cols-3 gap-3">
             <div>
               <label className="text-sm font-medium">Price (override)</label>
               <input
@@ -286,6 +293,7 @@ export default function Item() {
               />
               <p className="text-xs text-gray-600 mt-1">Leave blank to use category default.</p>
             </div>
+
             <div>
               <label className="text-sm font-medium">Points (override)</label>
               <input
@@ -298,6 +306,21 @@ export default function Item() {
                 disabled={saving}
               />
               <p className="text-xs text-gray-600 mt-1">Leave blank to use category default.</p>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium">Maintenance Cost (pts)</label>
+              <input
+                name="maintenance_cost"
+                type="number"
+                placeholder="e.g. 50"
+                className="w-full p-2 rounded-lg bg-white border"
+                value={newItem.maintenance_cost}
+                onChange={handleChange}
+                disabled={saving}
+                min="0"
+              />
+              <p className="text-xs text-gray-600 mt-1">Set to 0 or leave blank if no maintenance.</p>
             </div>
           </div>
 
@@ -409,6 +432,8 @@ export default function Item() {
             const imgSrc = normalizeMediaUrl(item.file_path) || firstSubImageUrl(item);
             const price = priceOf(item);
             const pts = pointsOf(item);
+            const hasMaintenance = Boolean(item?.has_maintenance || (maintenanceOf(item) > 0));
+            const maint = maintenanceOf(item);
 
             return (
               <div key={item.id} className={`p-4 rounded-xl bg-[#e0e0e0] ${neuShadow}`}>
@@ -435,9 +460,21 @@ export default function Item() {
                 </p>
 
                 <p className="text-xs mt-1"><strong>Category:</strong> {item.category?.name || 'No Category'}</p>
-                <p className="text-xs mb-2">
-                  <strong>Price:</strong> ₱{price.toFixed(2)} ({pts} pts)
-                </p>
+
+                {/* Price/Points row with MAINTENANCE indicator for admins */}
+                <div className="text-xs mb-2 flex items-center gap-2 flex-wrap">
+                  <span>
+                    <strong>Price:</strong> ₱{price.toFixed(2)} ({pts} pts)
+                  </span>
+                  {hasMaintenance && (
+                    <span
+                      className="px-2 py-0.5 rounded bg-fuchsia-200 text-fuchsia-900 font-semibold"
+                      title={`Maintenance cost: ${maint} pts`}
+                    >
+                      MAINTENANCE
+                    </span>
+                  )}
+                </div>
 
                 <div className="flex gap-2">
                   <button onClick={() => setDetailId(item.id)} className="flex-1 bg-blue-300 px-3 py-1 rounded-lg">View</button>

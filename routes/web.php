@@ -97,6 +97,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/messages/{message}',                    [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
     });
 
+
+        // Purchase Plans
+    Route::get ('/buy-points',       [PurchaseController::class, 'index'])->name('buy-points');
+    Route::post('/paymongo/source',  [PurchaseController::class, 'createSource'])->name('paymongo.source');
+    Route::post('/paymongo/payment', [PurchaseController::class, 'createPayment'])->name('paymongo.payment');
+
+    Route::get ('/payment-success',  [PurchaseController::class, 'success'])->name('payment.success');
+    Route::get ('/payment-failed',   [PurchaseController::class, 'failed'])->name('payment.failed');
+    
     // Owned Assets (User-facing) — keep a single block only
     Route::prefix('my')->name('user.')->group(function () {
         Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])

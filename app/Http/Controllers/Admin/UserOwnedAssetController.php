@@ -324,9 +324,12 @@ class UserOwnedAssetController extends Controller
                 'id'          => $a->id,
                 'title'       => $a->title,
                 'image_url'   => $image,
-                'points'      => $a->points,
-                'price'       => $a->price,
+                'points'      => (int) $a->points,
+                'price'       => (float) $a->price,
                 'category_id' => $a->category_id,
+                // optional: surface maintenance for pickers too
+                'maintenance_cost' => (float) ($a->maintenance_cost ?? 0),
+                'has_maintenance'  => ((float) ($a->maintenance_cost ?? 0)) > 0,
             ];
         });
 
@@ -340,127 +343,6 @@ class UserOwnedAssetController extends Controller
             ],
             'query' => $q,
         ]);
-    }
-
-    /** BULK GRANT: POST /admin/users/{user}/owned-assets/bulk */
-    public function bulkStore(Request $request, User $user)
-    {
-        $validated = $request->validate([
-            'asset_ids'       => ['required', 'array', 'min:1'],
-            'asset_ids.*'     => ['integer', Rule::exists('assets', 'id')],
-            'allow_overdraft' => ['nullable', 'boolean'],
-        ]);
-
-        $assetIds       = array_values(array_unique(array_map('intval', $validated['asset_ids'])));
-        $allowOverdraft = (bool) ($validated['allow_overdraft'] ?? false);
-        $result         = ['granted' => [], 'skipped' => [], 'insufficient' => []];
-
-        try {
-            DB::transaction(function () use ($user, $assetIds, $allowOverdraft, &$result) {
-                $u = User::where('id', $user->id)->lockForUpdate()->firstOrFail();
-                $assets = Asset::whereIn('id', $assetIds)->get()->keyBy('id');
-
-                foreach ($assetIds as $assetId) {
-                    $owned = Purchase::where('user_id', $u->id)
-                        ->where('asset_id', $assetId)
-                        ->where('status', Purchase::STATUS_COMPLETED)
-                        ->exists();
-                    if ($owned) { $result['skipped'][] = $assetId; continue; }
-
-                    $asset = $assets->get($assetId);
-                    if (!$asset) { $result['skipped'][] = $assetId; continue; }
-
-                    $assetPoints = (int) ($asset->points ?? 0);
-                    $assetPrice  = (float) ($asset->price ?? 0);
-
-                    if (!$allowOverdraft && $u->points < $assetPoints) {
-                        $result['insufficient'][] = $assetId;
-                        continue;
-                    }
-
-                    $u->points = (int) $u->points - $assetPoints;
-                    $u->save();
-
-                    Purchase::create([
-                        'user_id'      => $u->id,
-                        'asset_id'     => $assetId,
-                        'points_spent' => $assetPoints,
-                        'cost_amount'  => $assetPrice,
-                        'currency'     => 'PHP',
-                        'status'       => Purchase::STATUS_COMPLETED,
-                        'source'       => Purchase::SOURCE_MANUAL,
-                        'revoked_at'   => null,
-                    ]);
-
-                    $result['granted'][] = $assetId;
-                }
-            });
-
-            Log::info('Bulk manual grant (with points deduction)', [
-                'user_id'  => $user->id,
-                'result'   => $result,
-                'admin_id' => auth()->id(),
-            ]);
-
-            return response()->json(['message' => 'Bulk grant finished.', 'result' => $result], 201);
-        } catch (\Throwable $e) {
-            Log::error('Bulk manual grant failed', [
-                'user_id' => $user->id,
-                'error'   => $e->getMessage(),
-            ]);
-            return response()->json(['message' => 'Failed to bulk grant.'], 500);
-        }
-    }
-
-    /** BULK DESTROY: DELETE /admin/owned-assets/bulk */
-    public function bulkDestroy(Request $request)
-    {
-        $validated = $request->validate([
-            'purchase_ids'   => ['required', 'array', 'min:1'],
-            'purchase_ids.*' => ['integer', Rule::exists('purchases', 'id')],
-            'mode'           => ['nullable', Rule::in(['revoke', 'delete'])],
-            'refund_points'  => ['nullable', 'boolean'],
-        ]);
-
-        $mode         = $validated['mode'] ?? 'revoke';
-        $refundPoints = (bool) ($validated['refund_points'] ?? false);
-
-        try {
-            DB::transaction(function () use ($validated, $mode, $refundPoints) {
-                $purchases = Purchase::whereIn('id', $validated['purchase_ids'])->get();
-
-                if ($mode === 'delete') {
-                    foreach ($purchases as $p) {
-                        if ($p->status === Purchase::STATUS_COMPLETED && $refundPoints) {
-                            $u = User::where('id', $p->user_id)->lockForUpdate()->first();
-                            if ($u) { $u->points += (int) ($p->points_spent ?? 0); $u->save(); }
-                        }
-                        $p->delete();
-                    }
-                    return;
-                }
-
-                foreach ($purchases as $p) {
-                    $this->safeRevoke($p, $p->status === Purchase::STATUS_COMPLETED, $refundPoints);
-                }
-            });
-
-            Log::info('Bulk ownership modification', [
-                'purchase_ids' => $validated['purchase_ids'],
-                'mode'         => $mode,
-                'refund'       => $refundPoints,
-                'admin_id'     => auth()->id(),
-            ]);
-
-            return response()->json(['message' => 'Bulk operation completed.']);
-        } catch (\Throwable $e) {
-            Log::error('Bulk ownership modification failed', [
-                'purchase_ids' => $validated['purchase_ids'] ?? [],
-                'mode'         => $mode,
-                'error'        => $e->getMessage(),
-            ]);
-            return response()->json(['message' => 'Failed to perform bulk operation.'], 500);
-        }
     }
 
     /* ===================== Helpers ===================== */
@@ -513,10 +395,17 @@ class UserOwnedAssetController extends Controller
 
     private function assetSelect(): array
     {
+        // Base columns
         $cols = ['id', 'title', 'file_path', 'points', 'price', 'category_id'];
+
+        // Optional columns
         if (Schema::hasColumn('assets', 'cover_image_path')) {
             $cols[] = 'cover_image_path';
         }
+        if (Schema::hasColumn('assets', 'maintenance_cost')) {
+            $cols[] = 'maintenance_cost';
+        }
+
         return $cols;
     }
 
@@ -530,6 +419,10 @@ class UserOwnedAssetController extends Controller
                 : $asset->file_path;
         }
 
+        // Compute maintenance fields safely
+        $maintenanceCost = $asset ? (float) ($asset->maintenance_cost ?? 0) : 0.0;
+        $hasMaintenance  = $maintenanceCost > 0;
+
         return [
             'purchase_id'  => $p->id,
             'user_id'      => $p->user_id,
@@ -540,13 +433,19 @@ class UserOwnedAssetController extends Controller
             'cost_amount'  => (float) $p->cost_amount,
             'currency'     => $p->currency,
             'granted_at'   => optional($p->created_at)?->toDateTimeString(),
+
             'asset'        => $asset ? [
-                'id'          => $asset->id,
-                'title'       => $asset->title,
-                'image_url'   => $image,
-                'points'      => $asset->points,
-                'price'       => $asset->price,
-                'category_id' => $asset->category_id,
+                'id'                   => $asset->id,
+                'title'                => $asset->title,
+                'image_url'            => $image,
+                'points'               => (int) $asset->points,
+                'price'                => (float) $asset->price,
+                'category_id'          => $asset->category_id,
+                // NEW fields for admin views:
+                'maintenance_cost'     => $maintenanceCost,
+                'has_maintenance'      => $hasMaintenance,
+                // Admins can always view maintenance details
+                'can_view_maintenance' => true,
             ] : null,
         ];
     }
