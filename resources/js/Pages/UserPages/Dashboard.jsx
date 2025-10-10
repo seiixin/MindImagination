@@ -2,6 +2,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, usePage, Link } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
+import Swal from 'sweetalert2';
 
 export default function Dashboard() {
   const { auth } = usePage().props;
@@ -11,10 +12,24 @@ export default function Dashboard() {
   const [points, setPoints]   = useState(Number(auth?.user?.points ?? 0));
   const [busyId, setBusyId]   = useState(null);
 
-  // Safe route() helper
+  // Safe route() helper (fallback to "#")
   const r = (name, params) => {
     try { return route(name, params); } catch { return '#'; }
   };
+
+  const showError = async (title = 'Oops!', text = 'Something went wrong.') => {
+    await Swal.fire({ icon: 'error', title, text, confirmButtonText: 'OK' });
+  };
+
+  const showToast = (title = 'Done') =>
+    Swal.fire({
+      icon: 'success',
+      title,
+      toast: true,
+      position: 'top-end',
+      timer: 1500,
+      showConfirmButton: false,
+    });
 
   useEffect(() => {
     const url = r('user.owned-assets.index');
@@ -27,43 +42,93 @@ export default function Dashboard() {
   }, []);
 
   const handleDownload = async (asset) => {
-    if (!asset?.downloadable) return;
+    if (!asset?.downloadable || busyId === asset.id) return;
 
     setBusyId(asset.id);
     try {
       // 1) PREVIEW (GET)
       const previewUrl = asset.preview_url || r('user.owned-assets.preview', asset.id);
       const previewRes = await fetch(previewUrl, { credentials: 'same-origin' });
-      if (!previewRes.ok) throw new Error('Failed to check download cost.');
 
-      const preview = await previewRes.json();
-      const costNow = Number(preview?.cost_now ?? 0);
+      if (!previewRes.ok) {
+        const t = await previewRes.text();
+        await showError('Preview Failed', t || 'Failed to check download cost.');
+        return;
+      }
 
-      // 2) CONFIRM
-      const ok = window.confirm(
+      const preview   = await previewRes.json();
+      const costNow   = Number(preview?.cost_now ?? 0);
+      const canAfford = Boolean(preview?.can_afford ?? true);
+
+      // If they can’t afford, offer Buy Points
+      if (costNow > 0 && !canAfford) {
+        const buy = await Swal.fire({
+          icon: 'warning',
+          title: 'Insufficient points',
+          text: `You need ${costNow} points to re-download this file.`,
+          showCancelButton: true,
+          confirmButtonText: 'Buy Points',
+          cancelButtonText: 'Cancel',
+          reverseButtons: true,
+        });
+        if (buy.isConfirmed) {
+          window.location.assign(r('buy-points'));
+        }
+        return;
+      }
+
+      // 2) SweetAlert2 CONFIRM
+      const confirmHtml =
         costNow > 0
-          ? `This download costs ${costNow} points (maintenance). Continue?`
-          : 'First download is free. Maintenance applies next time. Continue?'
-      );
-      if (!ok) return;
+          ? `<div class="text-left">
+               <p class="mb-2">This download costs <b>${costNow}</b> points (maintenance).</p>
+               <p class="text-xs opacity-80">Points will be deducted upon download.</p>
+             </div>`
+          : `<div class="text-left">
+               <p class="mb-2"><b>First download is free.</b></p>
+               <p class="text-xs opacity-80">Maintenance may apply on your next download.</p>
+             </div>`;
 
-      // 3) DOWNLOAD VIA GET (no CSRF needed)
-      // Prefer the string provided by backend; fall back to named route.
+      const result = await Swal.fire({
+        icon: costNow > 0 ? 'warning' : 'info',
+        title: 'Confirm download',
+        html: confirmHtml,
+        showCancelButton: true,
+        confirmButtonText: 'Download',
+        cancelButtonText: 'Cancel',
+        reverseButtons: true,
+        focusConfirm: false,
+      });
+
+      if (!result.isConfirmed) return;
+
+      // 3) DOWNLOAD VIA GET (?confirm=1) — no CSRF needed
       const base =
         asset.download_url ||
         r('user.owned-assets.download.get', asset.id) ||
-        r('user.owned-assets.download', asset.id); // last-resort fallback
-
+        r('user.owned-assets.download', asset.id);
       const dlUrl = `${base}${base.includes('?') ? '&' : '?'}confirm=1`;
 
-      // Update local points immediately so UI reflects spend
-      if (costNow > 0) setPoints(p => Math.max(0, Number(p || 0) - costNow));
+      // Optional “Starting…” toast (fires immediately)
+      Swal.fire({
+        title: 'Preparing your download…',
+        allowEscapeKey: false,
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading(),
+      });
+
+      // Keep UI points in sync locally (server does the real deduction)
+      if (costNow > 0) {
+        setPoints((p) => Math.max(0, Number(p || 0) - costNow));
+      }
 
       // 4) Navigate — server will redirect/stream the file
       window.location.assign(dlUrl);
+      // If the page continues (e.g., pop-up blocked), close loader after a short while
+      setTimeout(() => Swal.close(), 3000);
     } catch (e) {
       console.error(e);
-      alert(e?.message || 'Something went wrong. Please try again.');
+      await showError('Download Error', e?.message || 'Please try again.');
     } finally {
       setBusyId(null);
     }

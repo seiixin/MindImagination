@@ -29,6 +29,7 @@ use App\Http\Controllers\AssetInteractionController;
 use App\Http\Controllers\Admin\StorePlanController;
 use App\Http\Controllers\ChatSupportController;
 use App\Http\Controllers\Admin\UserOwnedAssetController;
+use App\Http\Controllers\UserContactUsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -52,6 +53,9 @@ Route::get('/assets/{slug}', [AssetController::class, 'showBySlug'])->name('asse
 Route::post('/assets/{asset}/views', [AssetInteractionController::class, 'viewsStore'])
     ->whereNumber('asset')
     ->name('assets.views.store');
+
+Route::get('/contact/settings', [UserContactUsController::class, 'show'])
+->name('contact.settings');
 
 /*
 |--------------------------------------------------------------------------

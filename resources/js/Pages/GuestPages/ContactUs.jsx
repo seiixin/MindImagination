@@ -8,9 +8,7 @@ import { Paperclip, Send, Loader2, RefreshCcw } from 'lucide-react';
 // ---- axios defaults (Laravel CSRF + XHR header) ----
 if (typeof window !== 'undefined') {
   axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
-  const token = document
-    .querySelector('meta[name="csrf-token"]')
-    ?.getAttribute('content');
+  const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
   if (token) axios.defaults.headers.common['X-CSRF-TOKEN'] = token;
 }
 
@@ -32,6 +30,40 @@ function InitialAvatar({ name = 'User' }) {
 
 export default function ContactUs() {
   const { auth } = usePage().props;
+
+  // ---------- LOAD CONTACT SETTINGS FROM BACKEND ----------
+  const [contact, setContact] = useState({
+    email: null,
+    facebook: null,
+    discord: null,
+    phone: null,
+    address: null,
+    website: null,
+  });
+  const [loadingContact, setLoadingContact] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const { data } = await axios.get('/contact/settings'); // from UserContactUsController@show
+        if (!mounted) return;
+        setContact({
+          email: data?.email ?? null,
+          facebook: data?.facebook ?? null,
+          discord: data?.discord ?? null,
+          phone: data?.phone ?? null,
+          address: data?.address ?? null,
+          website: data?.website ?? null,
+        });
+      } catch {
+        // keep defaults if fails
+      } finally {
+        if (mounted) setLoadingContact(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // ---------- Contact form (left) ----------
   const [email, setEmail] = useState('');
@@ -240,39 +272,36 @@ Thank you`;
     }
   }
 
-  // Fallback polling (kept) – will also run even if Echo is present, but dedup prevents dupes
+  // Fallback polling
   useEffect(() => {
     if (!activeConv?.id) return;
     const t = setInterval(() => loadMessages(activeConv.id), 7000);
     return () => clearInterval(t);
   }, [activeConv?.id]);
 
-  // Reverb/Echo subscription to private channel: conversations.{id}
+  // Reverb/Echo
   useEffect(() => {
     if (!auth?.user || !activeConv?.id || typeof window === 'undefined' || !window.Echo) return;
 
     const channelName = `conversations.${activeConv.id}`;
-    const channel = window.Echo.private(channelName)
-      .listen('.ChatMessageCreated', (e) => {
-        // Normalize payload and append if new
-        addMessageUnique({
-          id: e.id,
-          conversation_id: e.conversation_id,
-          sender_type: e.sender_type,
-          sender_id: e.sender_id,
-          message: e.message,
-          attachment_path: e.attachment_path,
-          attachment_url: e.attachment_url,
-          full_date: e.full_date,
-          created_at: e.created_at,
-        });
-        scrollToBottom();
+    const channel = window.Echo.private(channelName).listen('.ChatMessageCreated', (e) => {
+      addMessageUnique({
+        id: e.id,
+        conversation_id: e.conversation_id,
+        sender_type: e.sender_type,
+        sender_id: e.sender_id,
+        message: e.message,
+        attachment_path: e.attachment_path,
+        attachment_url: e.attachment_url,
+        full_date: e.full_date,
+        created_at: e.created_at,
       });
+      scrollToBottom();
+    });
 
     return () => {
       try {
         channel.stopListening('.ChatMessageCreated');
-        // Echo uses 'private-' prefix under the hood
         window.Echo.leave(`private-${channelName}`);
       } catch {}
     };
@@ -285,6 +314,9 @@ Thank you`;
     };
   }, [previewUrl]);
 
+  // Helpers for tel/maps
+  const cleanTel = (t) => String(t || '').replace(/[^\d+]/g, '');
+
   return (
     <GuestLayout>
       <section className="mx-auto max-w-6xl px-4 py-6 text-white">
@@ -293,14 +325,61 @@ Thank you`;
           For concerns and inquiries, let us know. For urgent help, contact us via:
         </p>
 
-        {/* Social Icons */}
-        <div className="mt-2 mb-4 flex justify-center gap-3 text-lg">
-          <a href="#" title="Facebook" className="transition hover:text-[#0ff]">
+        {/* Social Icons (CLICKABLE) */}
+        <div className="mt-2 flex justify-center gap-4 text-lg">
+          <a
+            href={contact.facebook || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Facebook"
+            aria-disabled={!contact.facebook}
+            className={`transition hover:text-[#0ff] ${contact.facebook ? '' : 'pointer-events-none opacity-50'}`}
+          >
             <i className="fab fa-facebook-f" />
           </a>
-          <a href="#" title="Discord" className="transition hover:text-[#0ff]">
+          <a
+            href={contact.discord || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Discord"
+            aria-disabled={!contact.discord}
+            className={`transition hover:text-[#0ff] ${contact.discord ? '' : 'pointer-events-none opacity-50'}`}
+          >
             <i className="fab fa-discord" />
           </a>
+        </div>
+
+        {/* Phone + Address under icons */}
+        <div className="mb-4 mt-2 text-center text-sm text-white/80 space-y-1">
+          {loadingContact ? (
+            <div className="animate-pulse text-white/50">Loading contact…</div>
+          ) : (
+            <>
+              {contact.phone && (
+                <div>
+                  <a
+                    href={`tel:${cleanTel(contact.phone)}`}
+                    className="underline decoration-sky-400 underline-offset-2"
+                  >
+                    {contact.phone}
+                  </a>
+                </div>
+              )}
+              {contact.address && (
+                <div>
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(contact.address)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline decoration-sky-400 underline-offset-2"
+                    title={contact.address}
+                  >
+                    {contact.address}
+                  </a>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -330,6 +409,7 @@ Thank you`;
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                placeholder={contact.email || 'you@example.com'}
                 className="w-full rounded bg-[#e6f0fa] px-2 py-2 text-black ring-1 ring-white/20 focus:outline-none focus:ring-2 focus:ring-sky-400"
               />
             </div>
@@ -398,7 +478,7 @@ Thank you`;
             </button>
           </form>
 
-          {/* RIGHT: Live Chat Support — min height + scroller; green send */}
+          {/* RIGHT: Live Chat Support */}
           <div className="flex flex-col rounded-xl border border-white/20 bg-[#0b1627]/80 p-0 shadow backdrop-blur-md">
             {/* Header */}
             <div className="flex items-center justify-between rounded-t-xl bg-[#0f1e36]/80 px-4 py-3">
@@ -424,11 +504,8 @@ Thank you`;
               )}
             </div>
 
-            {/* Messages Area — min height + scroll */}
-            <div
-              ref={listRef}
-              className="min-h-[360px] max-h-[360px] flex-1 space-y-2 overflow-y-auto px-3 py-3"
-            >
+            {/* Messages Area */}
+            <div ref={listRef} className="min-h-[360px] max-h-[360px] flex-1 space-y-2 overflow-y-auto px-3 py-3">
               {!auth?.user ? (
                 <div className="py-10 text-center text-white/70">
                   You must{' '}
@@ -449,13 +526,16 @@ Thank you`;
 
                   return (
                     <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                      {!mine && <div className="mr-2 self-end"><InitialAvatar name="Support" /></div>}
+                      {!mine && (
+                        <div className="mr-2 self-end">
+                          <InitialAvatar name="Support" />
+                        </div>
+                      )}
 
                       <div className="max-w-[78%]">
                         <div
                           className={`rounded-2xl px-3 py-2 text-[13px] shadow ${
-                            mine ? 'rounded-br-md bg-[#0084ff] text-white'
-                                 : 'rounded-bl-md bg-white text-gray-900'
+                            mine ? 'rounded-br-md bg-[#0084ff] text-white' : 'rounded-bl-md bg-white text-gray-900'
                           }`}
                         >
                           {atUrl && (
@@ -480,16 +560,16 @@ Thank you`;
                           {m.message && <div className="whitespace-pre-wrap">{m.message}</div>}
                         </div>
 
-                        <div
-                          className={`mt-1 px-1 text-[11px] ${
-                            mine ? 'text-white/70 text-right' : 'text-white/60'
-                          }`}
-                        >
+                        <div className={`mt-1 px-1 text-[11px] ${mine ? 'text-white/70 text-right' : 'text-white/60'}`}>
                           {m.full_date || m.created_at}
                         </div>
                       </div>
 
-                      {mine && <div className="ml-2 self-end"><InitialAvatar name={auth?.user?.name || 'You'} /></div>}
+                      {mine && (
+                        <div className="ml-2 self-end">
+                          <InitialAvatar name={auth?.user?.name || 'You'} />
+                        </div>
+                      )}
                     </div>
                   );
                 })
