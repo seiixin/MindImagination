@@ -8,26 +8,28 @@ use App\Http\Controllers\Controller;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class UserController extends Controller
 {
     /**
-     * List users (newest first).
+     * Render the Users Inertia page (newest first).
      */
     public function index()
     {
         try {
             $users = User::orderByDesc('created_at')->get();
 
-            \Log::info('Users retrieved:', $users->toArray());
+            Log::info('Users retrieved (admin index)', ['count' => $users->count()]);
 
             return Inertia::render('AdminPages/Users', [
                 'users' => $users,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Error fetching users: ' . $e->getMessage());
+            Log::error('Error fetching users: ' . $e->getMessage());
 
             return Inertia::render('AdminPages/Users', [
                 'users' => [],
@@ -37,13 +39,81 @@ class UserController extends Controller
     }
 
     /**
+     * Lightweight JSON list for dropdowns/selects.
+     * Returns id, name, email (email optional).
+     *
+     * Query params:
+     *  - q: string (search by name/email/username)
+     *  - limit: int (default 100, max 500)
+     *  - exclude_ids[]: array<int> (exclude specific user ids)
+     *  - only_enabled: bool (if users table has active_status column)
+     *  - include_email: bool (default true)
+     */
+    public function light(Request $request)
+    {
+        $q            = trim((string) $request->get('q', ''));
+        $limit        = (int) ($request->integer('limit') ?: 100);
+        $limit        = max(1, min($limit, 500));
+        $excludeIds   = array_map('intval', (array) $request->input('exclude_ids', []));
+        $onlyEnabled  = $request->boolean('only_enabled', false);
+        $includeEmail = $request->boolean('include_email', true);
+
+        $query = User::query()->orderBy('name');
+
+        // Select minimal columns first; add email if requested.
+        $select = ['id', 'name'];
+        if ($includeEmail) {
+            $select[] = 'email';
+        }
+        // Add username as searchable if present
+        if (Schema::hasColumn('users', 'username')) {
+            $select[] = 'username';
+        }
+
+        $query->select(array_unique($select));
+
+        if ($q !== '') {
+            $like = '%' . str_replace('%', '\%', $q) . '%';
+            $query->where(function ($qq) use ($like) {
+                $qq->where('name', 'like', $like)
+                   ->orWhere('email', 'like', $like);
+                if (Schema::hasColumn('users', 'username')) {
+                    $qq->orWhere('username', 'like', $like);
+                }
+            });
+        }
+
+        if (!empty($excludeIds)) {
+            $query->whereNotIn('id', $excludeIds);
+        }
+
+        if ($onlyEnabled && Schema::hasColumn('users', 'active_status')) {
+            $query->where('active_status', 'enabled');
+        }
+
+        $users = $query->limit($limit)->get();
+
+        // If username was selected for search convenience, hide it by default in payload
+        // unless explicitly requested (keep payload minimal for dropdowns).
+        $payload = $users->map(function ($u) use ($includeEmail) {
+            return array_filter([
+                'id'    => $u->id,
+                'name'  => $u->name,
+                'email' => $includeEmail ? $u->email : null,
+            ], fn ($v) => !is_null($v));
+        });
+
+        return response()->json($payload);
+    }
+
+    /**
      * Store a newly created user.
      * Applies "Free Registration Points" if userPoints is not provided.
      */
     public function store(Request $request)
     {
         try {
-            \Log::info('Creating user with data:', $request->all());
+            Log::info('Creating user (admin)', ['payload' => $request->all()]);
 
             $validated = $request->validate([
                 'fullName'           => 'required|string|max:255',
@@ -76,23 +146,20 @@ class UserController extends Controller
                 'role'                 => $validated['access'],
             ];
 
-            \Log::info('User data being created:', $userData);
-
             $user = User::create($userData);
 
-            \Log::info('User created successfully:', $user->fresh()->toArray());
+            Log::info('User created successfully', ['id' => $user->id]);
 
             return redirect()->back()->with('success', 'User created successfully.');
         } catch (ValidationException $e) {
-            \Log::warning('Validation failed during user creation:', $e->errors());
+            Log::warning('Validation failed during user creation', ['errors' => $e->errors()]);
 
             return redirect()
                 ->back()
                 ->withErrors($e->errors())
                 ->withInput($request->all());
         } catch (\Exception $e) {
-            \Log::error('Error creating user: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
+            Log::error('Error creating user: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
 
             return redirect()
                 ->back()
@@ -109,10 +176,11 @@ class UserController extends Controller
     public function update(Request $request, User $user)
     {
         try {
-            \Log::info('=== UPDATE USER REQUEST ===');
-            \Log::info('User ID: ' . $user->id);
-            \Log::info('Request data:', $request->all());
-            \Log::info('Current user data BEFORE update:', $user->toArray());
+            Log::info('=== UPDATE USER REQUEST ===', [
+                'user_id' => $user->id,
+                'payload' => $request->all(),
+                'before'  => $user->toArray(),
+            ]);
 
             $validated = $request->validate([
                 'fullName'           => 'required|string|max:255',
@@ -126,8 +194,6 @@ class UserController extends Controller
                 'activeStatus'       => 'required|string|in:enabled,disabled',
                 'access'             => 'required|string|in:admin,editor,viewer',
             ]);
-
-            \Log::info('Validated data:', $validated);
 
             // Capture old status BEFORE update
             $wasEnabled = $user->getOriginal('active_status') === 'enabled';
@@ -150,22 +216,20 @@ class UserController extends Controller
 
             if (!empty($validated['password'])) {
                 $updateData['password'] = Hash::make($validated['password']);
-                \Log::info('Password will be updated');
+                Log::info('Password will be updated');
             } else {
-                \Log::info('Password will NOT be updated (empty)');
+                Log::info('Password not updated (empty)');
             }
 
-            \Log::info('Update data being sent to database:', $updateData);
-
             $updateResult = $user->update($updateData);
-            \Log::info('Update result (boolean):', ['result' => $updateResult]);
+            Log::info('User update result', ['result' => (bool) $updateResult]);
 
-            // Reload the latest values
+            // Reload latest values
             $user->refresh();
 
             // If status flipped from enabled -> disabled, revoke remember token & purge sessions (DB driver)
             if ($wasEnabled && $user->active_status !== 'enabled') {
-                \Log::info('User moved to DISABLED — revoking remember token and purging sessions', [
+                Log::info('User moved to DISABLED — rotating remember token & purging sessions', [
                     'user_id' => $user->id,
                 ]);
 
@@ -179,37 +243,26 @@ class UserController extends Controller
                         ->where('user_id', $user->id)
                         ->delete();
 
-                    \Log::info('Database sessions purged for user_id: ' . $user->id);
+                    Log::info('Database sessions purged', ['user_id' => $user->id]);
                 } else {
-                    \Log::info('Session driver is not database; sessions will be dropped on next request by middleware.');
+                    Log::info('Session driver is not database; sessions will expire via middleware.');
                 }
             }
 
-            \Log::info('User data AFTER update from database:', $user->toArray());
-
-            \Log::info('Specific fields after update:', [
-                'verification_status' => $user->verification_status,
-                'active_status'       => $user->active_status,
-                'role'                => $user->role,
-                'points'              => $user->points,
-                'address'             => $user->address,
+            Log::info('User AFTER update', [
+                'user' => $user->toArray(),
             ]);
 
             return redirect()->back()->with('success', 'User updated successfully.');
         } catch (ValidationException $e) {
-            \Log::warning('Validation failed during user update:', $e->errors());
+            Log::warning('Validation failed during user update', ['errors' => $e->errors()]);
 
             return redirect()
                 ->back()
                 ->withErrors($e->errors())
                 ->withInput($request->all());
         } catch (\Exception $e) {
-            \Log::error('Error updating user: ' . $e->getMessage());
-            \Log::error('Stack trace: ' . $e->getTraceAsString());
-
-            if (method_exists($e, 'getSql')) {
-                \Log::error('SQL Error: ' . $e->getSql());
-            }
+            Log::error('Error updating user: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
 
             return redirect()
                 ->back()
@@ -224,15 +277,15 @@ class UserController extends Controller
     public function destroy(User $user)
     {
         try {
-            \Log::info('Deleting user:', $user->toArray());
+            Log::info('Deleting user', ['user' => $user->toArray()]);
 
             $user->delete();
 
-            \Log::info('User deleted successfully');
+            Log::info('User deleted successfully', ['user_id' => $user->id ?? null]);
 
             return redirect()->back()->with('success', 'User deleted successfully.');
         } catch (\Exception $e) {
-            \Log::error('Error deleting user: ' . $e->getMessage());
+            Log::error('Error deleting user: ' . $e->getMessage());
 
             return redirect()->back()->with('error', 'Failed to delete user: ' . $e->getMessage());
         }
@@ -276,7 +329,7 @@ class UserController extends Controller
 
             $user->save();
 
-            \Log::info('Free Registration Points updated', [
+            Log::info('Free Registration Points updated', [
                 'user_id' => $user->id,
                 'mode'    => $mode,
                 'before'  => $before,
@@ -286,14 +339,14 @@ class UserController extends Controller
 
             return redirect()->back()->with('success', 'Free Registration Points updated successfully.');
         } catch (ValidationException $e) {
-            \Log::warning('Validation failed during points assignment:', $e->errors());
+            Log::warning('Validation failed during points assignment', ['errors' => $e->errors()]);
 
             return redirect()
                 ->back()
                 ->withErrors($e->errors())
                 ->withInput($request->all());
         } catch (\Exception $e) {
-            \Log::error('Error assigning free points: ' . $e->getMessage());
+            Log::error('Error assigning free points: ' . $e->getMessage());
 
             return redirect()->back()->with('error', 'Failed to assign free points.');
         }

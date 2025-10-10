@@ -16,12 +16,82 @@ class AssetController extends Controller
      | Admin JSON API (used by your admin Item.jsx)
      * =======================================================*/
 
-    public function index()
+    /**
+     * List assets for admin.
+     *
+     * Query params (all optional):
+     *  - include_relations: bool (default true) — include comments/views/ratings/favorites arrays
+     *  - with_counts:      bool (default true) — include *_count and avg_rating fields
+     *  - relations_limit:  int  (default null) — if set, limit each relation to this many recent rows
+     */
+    public function index(Request $request)
     {
-        $items = Asset::with(['category', 'comments', 'views', 'ratings', 'favorites'])->get();
+        $includeRelations = $request->boolean('include_relations', true);
+        $withCounts       = $request->boolean('with_counts', true);
+        $relLimit         = $request->integer('relations_limit');
 
-        // Admin endpoints: can always view maintenance
-        $items = $items->map(fn ($a) => $this->transformAsset($a, true));
+        $query = Asset::query()->with(['category']);
+
+        if ($includeRelations) {
+            $query->with([
+                'comments'  => function ($q) use ($relLimit) {
+                    $q->latest('id');
+                    if ($relLimit) $q->limit($relLimit);
+                    $q->with('user:id,name,email');
+                },
+                'views'     => function ($q) use ($relLimit) {
+                    $q->latest('id');
+                    if ($relLimit) $q->limit($relLimit);
+                    $q->with('user:id,name,email');
+                },
+                'ratings'   => function ($q) use ($relLimit) {
+                    $q->latest('id');
+                    if ($relLimit) $q->limit($relLimit);
+                    $q->with('user:id,name,email');
+                },
+                'favorites' => function ($q) use ($relLimit) {
+                    $q->latest('id');
+                    if ($relLimit) $q->limit($relLimit);
+                    $q->with('user:id,name,email');
+                },
+            ]);
+        }
+
+        if ($withCounts) {
+            $query
+                ->withCount(['comments', 'views', 'ratings', 'favorites'])
+                ->withAvg('ratings', 'rating'); // ->ratings_avg_rating
+        }
+
+        $items = $query->get()->map(function (Asset $a) use ($withCounts, $includeRelations, $relLimit) {
+            $arr = $this->transformAsset($a, true); // admin => always can view maintenance
+
+            // Normalize relation-limit meta + counts/avg
+            if ($withCounts) {
+                $arr['comments_count']  = $a->getAttribute('comments_count')  ?? $a->comments()->count();
+                $arr['views_count']     = $a->getAttribute('views_count')     ?? $a->views()->count();
+                $arr['ratings_count']   = $a->getAttribute('ratings_count')   ?? $a->ratings()->count();
+                $arr['favorites_count'] = $a->getAttribute('favorites_count') ?? $a->favorites()->count();
+
+                $avg = $a->getAttribute('ratings_avg_rating');
+                if ($avg === null) {
+                    $avg = $a->ratings()->avg('rating');
+                }
+                $arr['avg_rating'] = round((float) ($avg ?? 0), 1);
+            }
+
+            if ($includeRelations && $relLimit) {
+                $arr['relations_has_more'] = [
+                    'comments'  => ($arr['comments_count']  ?? 0) > count($arr['comments']  ?? []),
+                    'views'     => ($arr['views_count']     ?? 0) > count($arr['views']     ?? []),
+                    'ratings'   => ($arr['ratings_count']   ?? 0) > count($arr['ratings']   ?? []),
+                    'favorites' => ($arr['favorites_count'] ?? 0) > count($arr['favorites'] ?? []),
+                ];
+                $arr['relations_limit'] = $relLimit;
+            }
+
+            return $arr;
+        });
 
         return response()->json($items);
     }
@@ -74,13 +144,78 @@ class AssetController extends Controller
         $asset = Asset::create($data)->load(['category', 'comments', 'views', 'ratings', 'favorites']);
 
         // Admin endpoint => can view maintenance
-        return response()->json($this->transformAsset($asset, true), 201);
+        $arr = $this->transformAsset($asset, true);
+
+        // Add counts + avg for admin modal
+        $arr['comments_count']  = $asset->comments()->count();
+        $arr['views_count']     = $asset->views()->count();
+        $arr['ratings_count']   = $asset->ratings()->count();
+        $arr['favorites_count'] = $asset->favorites()->count();
+        $arr['avg_rating']      = round((float) ($asset->ratings()->avg('rating') ?? 0), 1);
+
+        return response()->json($arr, 201);
     }
 
-    public function show(Asset $asset)
+    /**
+     * Show single asset for admin modal.
+     *
+     * Query params (all optional):
+     *  - include_relations: bool (default true)
+     *  - with_counts:      bool (default true)
+     *  - relations_limit:  int  (default null)
+     */
+    public function show(Request $request, Asset $asset)
     {
-        $asset->load(['category', 'comments', 'views', 'ratings', 'favorites']);
-        return response()->json($this->transformAsset($asset, true)); // admin => true
+        $includeRelations = $request->boolean('include_relations', true);
+        $withCounts       = $request->boolean('with_counts', true);
+        $relLimit         = $request->integer('relations_limit');
+
+        $relations = ['category'];
+        if ($includeRelations) {
+            $relations = array_merge($relations, [
+                'comments'  => function ($q) use ($relLimit) {
+                    $q->latest('id')->with('user:id,name,email');
+                    if ($relLimit) $q->limit($relLimit);
+                },
+                'views'     => function ($q) use ($relLimit) {
+                    $q->latest('id')->with('user:id,name,email');
+                    if ($relLimit) $q->limit($relLimit);
+                },
+                'ratings'   => function ($q) use ($relLimit) {
+                    $q->latest('id')->with('user:id,name,email');
+                    if ($relLimit) $q->limit($relLimit);
+                },
+                'favorites' => function ($q) use ($relLimit) {
+                    $q->latest('id')->with('user:id,name,email');
+                    if ($relLimit) $q->limit($relLimit);
+                },
+            ]);
+        }
+
+        $asset->load($relations);
+
+        // Admin => always true for maintenance visibility
+        $arr = $this->transformAsset($asset, true);
+
+        if ($withCounts) {
+            $arr['comments_count']  = $asset->comments()->count();
+            $arr['views_count']     = $asset->views()->count();
+            $arr['ratings_count']   = $asset->ratings()->count();
+            $arr['favorites_count'] = $asset->favorites()->count();
+            $arr['avg_rating']      = round((float) ($asset->ratings()->avg('rating') ?? 0), 1);
+        }
+
+        if ($includeRelations && $relLimit) {
+            $arr['relations_has_more'] = [
+                'comments'  => ($arr['comments_count']  ?? 0) > count($arr['comments']  ?? []),
+                'views'     => ($arr['views_count']     ?? 0) > count($arr['views']     ?? []),
+                'ratings'   => ($arr['ratings_count']   ?? 0) > count($arr['ratings']   ?? []),
+                'favorites' => ($arr['favorites_count'] ?? 0) > count($arr['favorites'] ?? []),
+            ];
+            $arr['relations_limit'] = $relLimit;
+        }
+
+        return response()->json($arr); // admin => true
     }
 
     public function update(Request $request, Asset $asset)
@@ -141,9 +276,18 @@ class AssetController extends Controller
         }
 
         $asset->update($data);
+
+        // Reload for response
         $asset->load(['category', 'comments', 'views', 'ratings', 'favorites']);
 
-        return response()->json($this->transformAsset($asset, true)); // admin => true
+        $arr = $this->transformAsset($asset, true);
+        $arr['comments_count']  = $asset->comments()->count();
+        $arr['views_count']     = $asset->views()->count();
+        $arr['ratings_count']   = $asset->ratings()->count();
+        $arr['favorites_count'] = $asset->favorites()->count();
+        $arr['avg_rating']      = round((float) ($asset->ratings()->avg('rating') ?? 0), 1);
+
+        return response()->json($arr); // admin => true
     }
 
     public function destroy(Asset $asset)
@@ -225,7 +369,7 @@ class AssetController extends Controller
     /**
      * Build an asset array with normalized URLs and (optionally) maintenance fields.
      *
-     * @param  Asset  $asset
+     * @param  Asset     $asset
      * @param  bool|null $canViewMaintenance  If null => default true (admin endpoints).
      */
     private function transformAsset(Asset $asset, ?bool $canViewMaintenance = null): array
@@ -288,5 +432,5 @@ class AssetController extends Controller
         }
 
         return null;
-    }
+        }
 }

@@ -6,27 +6,35 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
-use App\Models\Asset;
-use App\Models\User;
 
 class AssetView extends Model
 {
     use HasFactory;
 
+    /**
+     * We manage timestamps manually to support:
+     * - public tracking via viewed_at or created_at
+     * - admin-generated dummy rows with explicit created_at/updated_at
+     */
     public $timestamps = false;
 
+    /**
+     * Allow plain creates for admin dummy data.
+     */
     protected $fillable = [
         'asset_id',
         'user_id',
         'session_id',
         'ip_address',
         'viewed_at',
-        'created_at',   // ← add this so we can set it manually when needed
+        'created_at',
+        'updated_at',
     ];
 
     protected $casts = [
-        'viewed_at' => 'datetime',
+        'viewed_at'  => 'datetime',
         'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 
     protected static function booted()
@@ -34,36 +42,66 @@ class AssetView extends Model
         static::creating(function (AssetView $view) {
             $table = $view->getTable();
 
-            // If table has viewed_at, prefer that; otherwise fall back to created_at (nullable)
+            // Prefer an explicit "viewed_at" column if present; otherwise use created_at.
             if (Schema::hasColumn($table, 'viewed_at') && empty($view->viewed_at)) {
                 $view->viewed_at = now();
             } elseif (Schema::hasColumn($table, 'created_at') && empty($view->created_at)) {
                 $view->created_at = now();
             }
+
+            // Mirror updated_at when present so admin bulk inserts look consistent.
+            if (Schema::hasColumn($table, 'updated_at') && empty($view->updated_at)) {
+                $view->updated_at = $view->created_at ?? now();
+            }
         });
     }
 
-    public function asset() { return $this->belongsTo(Asset::class); }
-    public function user()  { return $this->belongsTo(User::class); }
+    /* -----------------------------------------------------------------
+     | Relationships
+     * -----------------------------------------------------------------*/
+    public function asset()
+    {
+        return $this->belongsTo(Asset::class);
+    }
 
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    /* -----------------------------------------------------------------
+     | Public tracking helper (kept as-is, with light resiliency)
+     | De-dupes by recent window using user_id OR session_id (fallback ip).
+     * -----------------------------------------------------------------*/
     public static function recordUnique(Asset $asset, Request $request, int $minutes = 30): array
     {
         $userId    = optional($request->user())->id;
-        $sessionId = $request->session()->getId();
+        $sessionId = $request->hasSession() ? $request->session()->getId() : null;
         $ip        = $request->ip();
 
         $table        = (new static)->getTable();
-        $timestampCol = Schema::hasColumn($table, 'viewed_at') ? 'viewed_at' : 'created_at';
+        $hasViewedAt  = Schema::hasColumn($table, 'viewed_at');
+        $hasCreatedAt = Schema::hasColumn($table, 'created_at');
+        $hasUpdatedAt = Schema::hasColumn($table, 'updated_at');
+        $hasSessionId = Schema::hasColumn($table, 'session_id');
+        $hasIp        = Schema::hasColumn($table, 'ip_address');
 
-        // De-dupe by recent window (handles both auth users and guests via session)
-        $q = static::query()
-            ->where('asset_id', $asset->id)
-            ->when($timestampCol, fn ($qq) => $qq->where($timestampCol, '>=', now()->subMinutes($minutes)));
+        // Choose the timestamp column used for the time window
+        $timestampCol = $hasViewedAt ? 'viewed_at' : ($hasCreatedAt ? 'created_at' : null);
+
+        $q = static::query()->where('asset_id', $asset->id);
+
+        if ($timestampCol) {
+            $q->where($timestampCol, '>=', now()->subMinutes($minutes));
+        }
 
         if ($userId) {
             $q->where('user_id', $userId);
-        } elseif (Schema::hasColumn($table, 'session_id')) {
+        } elseif ($hasSessionId && $sessionId) {
             $q->where('session_id', $sessionId);
+        } elseif ($hasIp && $ip) {
+            // Fallback when session_id column is missing
+            $q->where('ip_address', $ip);
         }
 
         $deduped = $q->exists();
@@ -76,20 +114,27 @@ class AssetView extends Model
                 'user_id'  => $userId,
             ];
 
-            if (Schema::hasColumn($table, 'session_id')) $data['session_id'] = $sessionId;
-            if (Schema::hasColumn($table, 'ip_address')) $data['ip_address'] = $ip;
+            if ($hasSessionId) $data['session_id'] = $sessionId;
+            if ($hasIp)        $data['ip_address'] = $ip;
 
-            // ✅ Set the right timestamp column explicitly
-            if ($timestampCol === 'viewed_at' && Schema::hasColumn($table, 'viewed_at')) {
+            // Set timestamps explicitly based on available columns
+            if ($hasViewedAt) {
                 $data['viewed_at'] = now();
-            } elseif ($timestampCol === 'created_at' && Schema::hasColumn($table, 'created_at')) {
+            } elseif ($hasCreatedAt) {
                 $data['created_at'] = now();
+            }
+            if ($hasUpdatedAt) {
+                $data['updated_at'] = $data['created_at'] ?? $data['viewed_at'] ?? now();
             }
 
             $row     = static::create($data);
             $created = true;
         }
 
-        return ['created' => $created, 'deduped' => $deduped, 'view' => $row];
+        return [
+            'created' => $created,
+            'deduped' => $deduped,
+            'view'    => $row,
+        ];
     }
 }

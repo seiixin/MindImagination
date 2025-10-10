@@ -31,6 +31,8 @@ use App\Http\Controllers\ChatSupportController;
 use App\Http\Controllers\Admin\UserOwnedAssetController;
 use App\Http\Controllers\UserContactUsController;
 use App\Http\Controllers\PolicyAboutController;
+use App\Http\Controllers\Admin\AssetInteractionAdminController as AdminInteractionController;
+
 /*
 |--------------------------------------------------------------------------
 | Public (Guest)
@@ -55,10 +57,11 @@ Route::post('/assets/{asset}/views', [AssetInteractionController::class, 'viewsS
     ->name('assets.views.store');
 
 Route::get('/contact/settings', [UserContactUsController::class, 'show'])
-->name('contact.settings');
+    ->name('contact.settings');
 
 Route::get('/policy/guest', [PolicyAboutController::class, 'index'])
     ->name('policy.guest.index');
+
 /*
 |--------------------------------------------------------------------------
 | Guest Auth
@@ -121,9 +124,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('owned-assets.preview');   // <-- matches Dashboard.jsx
 
         Route::get('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
-        ->whereNumber('asset')
-        ->name('owned-assets.download.get'); // optional extra name
-
+            ->whereNumber('asset')
+            ->name('owned-assets.download.get'); // optional extra name
 
         // Actual download (POST): deduct points & return URL/stream
         Route::post('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
@@ -175,6 +177,22 @@ Route::middleware(['auth', 'verified', 'is_admin'])
         Route::post('/users', [UserController::class, 'store']);
         Route::put('/users/{user}', [UserController::class, 'update']);
         Route::delete('/users/{user}', [UserController::class, 'destroy']);
+
+        // 🔹 Lightweight users JSON for dropdowns (id + name [+ email]), separate from the Inertia page
+        Route::get('/users-light', function (Request $request) {
+            $q = trim((string) $request->get('q', ''));
+            $limit = (int) ($request->integer('limit') ?: 100);
+            $query = \App\Models\User::query()->select('id', 'name', 'email')->orderBy('name');
+
+            if ($q !== '') {
+                $query->where(function ($qq) use ($q) {
+                    $qq->where('name', 'like', '%' . str_replace('%', '\%', $q) . '%')
+                       ->orWhere('email', 'like', '%' . str_replace('%', '\%', $q) . '%');
+                });
+            }
+
+            return response()->json($query->limit($limit)->get());
+        })->name('users.light');
 
         Route::get('/store-points', fn () => Inertia::render('AdminPages/StorePoints'))->name('store-points');
         Route::get('/store-category', fn () => Inertia::render('AdminPages/StoreCategory'))->name('store-category');
@@ -246,4 +264,36 @@ Route::middleware(['auth', 'verified', 'is_admin'])
             ->name('owned-assets.destroy');
         Route::get('/assets-light', [UserOwnedAssetController::class, 'assetsLight'])
             ->name('assets.light');
+
+        /*
+        |--------------------------------------------------------------
+        | Admin-only JSON routes for asset interactions & generators
+        |--------------------------------------------------------------
+        */
+        Route::prefix('interactions')->name('interactions.')->controller(AdminInteractionController::class)->group(function () {
+            // Comments (full CRUD with user + asset selection)
+            Route::get   ('/comments',        'commentsIndex')->name('comments.index');
+            Route::post  ('/comments',        'commentsStore')->name('comments.store');
+            Route::put   ('/comments/{id}',   'commentsUpdate')->name('comments.update');
+            Route::delete('/comments/{id}',   'commentsDestroy')->name('comments.destroy');
+
+            // Favorites (list/create/delete + bulk generate)
+            Route::get   ('/favorites',       'favoritesIndex')->name('favorites.index');
+            Route::post  ('/favorites',       'favoritesStore')->name('favorites.store');
+            Route::delete('/favorites/{id}',  'favoritesDestroy')->name('favorites.destroy');
+            Route::post  ('/favorites/generate', 'favoritesGenerate')->name('favorites.generate');
+
+            // Ratings (list/create/update/delete + bulk generate)
+            Route::get   ('/ratings',         'ratingsIndex')->name('ratings.index');
+            Route::post  ('/ratings',         'ratingsStore')->name('ratings.store');
+            Route::put   ('/ratings/{id}',    'ratingsUpdate')->name('ratings.update');
+            Route::delete('/ratings/{id}',    'ratingsDestroy')->name('ratings.destroy');
+            Route::post  ('/ratings/generate','ratingsGenerate')->name('ratings.generate');
+
+            // Views (list/create/delete + bulk generate)
+            Route::get   ('/views',           'viewsIndex')->name('views.index');
+            Route::post  ('/views',           'viewsStore')->name('views.store');
+            Route::delete('/views/{id}',      'viewsDestroy')->name('views.destroy');
+            Route::post  ('/views/generate',  'viewsGenerate')->name('views.generate');
+        });
     });

@@ -11,16 +11,13 @@ use Illuminate\Support\Facades\Gate;
 class AuthServiceProvider extends ServiceProvider
 {
     /**
-     * The policy mappings for the application.
-     *
-     * If you later add concrete policy classes, map them here.
-     * e.g. Purchase::class => \App\Policies\PurchasePolicy::class
+     * Map models to policies (add here if/when you create policy classes).
      *
      * @var array<class-string, class-string>
      */
     protected $policies = [
-        // Purchase::class => \App\Policies\PurchasePolicy::class,
-        // Asset::class    => \App\Policies\AssetPolicy::class,
+        // \App\Models\Purchase::class => \App\Policies\PurchasePolicy::class,
+        // \App\Models\Asset::class    => \App\Policies\AssetPolicy::class,
     ];
 
     /**
@@ -31,43 +28,50 @@ class AuthServiceProvider extends ServiceProvider
         $this->registerPolicies();
 
         /**
-         * Optional: Global admin override
-         * If a user is admin, allow all abilities by default.
-         * Remove this if you want per-ability checks even for admins.
+         * Global admin override:
+         * If a user is an admin, allow all abilities by default.
+         * (Avoid calling $user->can() here to prevent recursion.)
          */
         Gate::before(function (?User $user, string $ability) {
-            if ($user && method_exists($user, 'isAdmin') && $user->isAdmin()) {
+            if (!$user) {
+                return null;
+            }
+
+            // Property or helper methods your app might have:
+            if ((isset($user->is_admin) && $user->is_admin) ||
+                (method_exists($user, 'isAdmin') && $user->isAdmin()) ||
+                (method_exists($user, 'hasRole') && $user->hasRole('admin'))
+            ) {
                 return true;
             }
-            return null; // continue to other gate checks
+
+            return null; // proceed to specific gates/policies
         });
 
         /**
          * Gate: grant-owned-asset
-         * Who can grant (manually assign) an asset to a user?
-         * Default: admins only (before-callback already allows).
+         * Who can manually grant an asset to a user? (Admins by default.)
          */
         Gate::define('grant-owned-asset', function (User $user) {
-            return $user->isAdmin();
+            // Gate::before already allows admins; return false for others by default.
+            return false;
         });
 
         /**
          * Gate: revoke-owned-asset
-         * Who can revoke an owned asset (soft revoke or delete)?
-         * Default: admins only.
+         * Who can revoke an owned asset? (Admins by default.)
          */
-        Gate::define('revoke-owned-asset', function (User $user, Purchase $purchase = null) {
-            return $user->isAdmin();
+        Gate::define('revoke-owned-asset', function (User $user, ?Purchase $purchase = null) {
+            // Gate::before already allows admins; return false for others by default.
+            return false;
         });
 
         /**
          * Gate: download-asset
-         * Who can download a specific asset file?
-         * Allow if the user owns the asset (completed, not revoked).
-         * Admins are already allowed by Gate::before().
+         * Allow download if the user owns the asset (completed + not revoked).
+         * Admins are already allowed by Gate::before.
          */
         Gate::define('download-asset', function (User $user, Asset $asset) {
-            // Quick entitlement check using the scopes/helpers we added
             return $user->purchases()
                 ->where('asset_id', $asset->id)
                 ->where('status', Purchase::STATUS_COMPLETED)
