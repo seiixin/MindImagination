@@ -233,7 +233,7 @@ class AssetController extends Controller
         // Default to true for admin JSON endpoints
         $can = $canViewMaintenance ?? true;
 
-        // Start from model array (includes $appends like image_url, is_premium, has_maintenance if set)
+        // Start from model array (includes $appends on the model)
         $arr = $asset->toArray();
 
         // Normalize file-like fields to public URLs
@@ -259,7 +259,6 @@ class AssetController extends Controller
             $arr['maintenance_cost'] = $cost;
             $arr['has_maintenance']  = $has;
         } else {
-            // Hide cost; ensure boolean is false when not allowed
             unset($arr['maintenance_cost']);
             $arr['has_maintenance'] = false;
         }

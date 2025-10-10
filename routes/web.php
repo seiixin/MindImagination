@@ -46,8 +46,8 @@ Route::get('/privacy-policy', fn () => Inertia::render('GuestPages/PrivacyPolicy
 Route::get('/assets/{slug}', [AssetController::class, 'showBySlug'])->name('assets.details');
 
 /**
- * Make views endpoint PUBLIC (accessible by guests and logged-in users).
- * IMPORTANT: iisang route lang ito para walang conflict sa guest/auth.
+ * Views endpoint is PUBLIC (guests + logged-in users).
+ * Single route only to avoid conflicts with auth group.
  */
 Route::post('/assets/{asset}/views', [AssetInteractionController::class, 'viewsStore'])
     ->whereNumber('asset')
@@ -97,26 +97,35 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/messages/{message}',                    [ChatSupportController::class, 'destroyMessage'])->name('messages.destroy');
     });
 
-
-        // Purchase Plans
+    // Purchase Plans
     Route::get ('/buy-points',       [PurchaseController::class, 'index'])->name('buy-points');
     Route::post('/paymongo/source',  [PurchaseController::class, 'createSource'])->name('paymongo.source');
     Route::post('/paymongo/payment', [PurchaseController::class, 'createPayment'])->name('paymongo.payment');
-
     Route::get ('/payment-success',  [PurchaseController::class, 'success'])->name('payment.success');
     Route::get ('/payment-failed',   [PurchaseController::class, 'failed'])->name('payment.failed');
-    
-    // Owned Assets (User-facing) — keep a single block only
+
+    // Owned Assets (User-facing)
     Route::prefix('my')->name('user.')->group(function () {
         Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])
             ->name('owned-assets.index');
 
+        // Preview (GET) for confirm dialog
+        Route::get('/owned-assets/{asset}/download/preview', [UserAssetOwnedController::class, 'preview'])
+            ->whereNumber('asset')
+            ->name('owned-assets.preview');   // <-- matches Dashboard.jsx
+
         Route::get('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
+        ->whereNumber('asset')
+        ->name('owned-assets.download.get'); // optional extra name
+
+
+        // Actual download (POST): deduct points & return URL/stream
+        Route::post('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
             ->whereNumber('asset')
             ->name('owned-assets.download');
     });
 
-    // Asset Interactions (CRUD) — keep these auth-scoped endpoints
+    // Asset Interactions (CRUD) — auth-scoped
     Route::prefix('assets/{asset}')
         ->where(['asset' => '[0-9]+'])
         ->controller(AssetInteractionController::class)
@@ -136,7 +145,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/favorites/{id}',   'favoritesDestroy')->name('assets.favorites.destroy');
 
             Route::get   ('/views',            'viewsIndex')->name('assets.views.index');
-            // NOTE: wala nang POST /views dito; nasa public route na sa taas para iwas conflict
+            // NOTE: POST /assets/{asset}/views is public (defined above).
         });
 });
 

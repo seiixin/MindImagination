@@ -10,5 +10,6 @@ class VerifyCsrfToken extends Middleware
         'admin/backups',
         'admin/backups/*',
         'assets/*/views',
+        'my/owned-assets/*/download',
     ];
 }

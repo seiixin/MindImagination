@@ -5,9 +5,13 @@ import { useEffect, useState } from 'react';
 
 export default function Dashboard() {
   const { auth } = usePage().props;
-  const [assets, setAssets] = useState([]);
-  const [loading, setLoading] = useState(true);
 
+  const [assets, setAssets]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [points, setPoints]   = useState(Number(auth?.user?.points ?? 0));
+  const [busyId, setBusyId]   = useState(null);
+
+  // Safe route() helper
   const r = (name, params) => {
     try { return route(name, params); } catch { return '#'; }
   };
@@ -22,6 +26,49 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleDownload = async (asset) => {
+    if (!asset?.downloadable) return;
+
+    setBusyId(asset.id);
+    try {
+      // 1) PREVIEW (GET)
+      const previewUrl = asset.preview_url || r('user.owned-assets.preview', asset.id);
+      const previewRes = await fetch(previewUrl, { credentials: 'same-origin' });
+      if (!previewRes.ok) throw new Error('Failed to check download cost.');
+
+      const preview = await previewRes.json();
+      const costNow = Number(preview?.cost_now ?? 0);
+
+      // 2) CONFIRM
+      const ok = window.confirm(
+        costNow > 0
+          ? `This download costs ${costNow} points (maintenance). Continue?`
+          : 'First download is free. Maintenance applies next time. Continue?'
+      );
+      if (!ok) return;
+
+      // 3) DOWNLOAD VIA GET (no CSRF needed)
+      // Prefer the string provided by backend; fall back to named route.
+      const base =
+        asset.download_url ||
+        r('user.owned-assets.download.get', asset.id) ||
+        r('user.owned-assets.download', asset.id); // last-resort fallback
+
+      const dlUrl = `${base}${base.includes('?') ? '&' : '?'}confirm=1`;
+
+      // Update local points immediately so UI reflects spend
+      if (costNow > 0) setPoints(p => Math.max(0, Number(p || 0) - costNow));
+
+      // 4) Navigate — server will redirect/stream the file
+      window.location.assign(dlUrl);
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || 'Something went wrong. Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <AuthenticatedLayout>
       <Head title="Dashboard" />
@@ -32,13 +79,11 @@ export default function Dashboard() {
           <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 sm:gap-0">
             <div>
               <h1 className="text-white font-semibold text-xl sm:text-2xl">
-                HELLO {String(auth.user.name || '').toUpperCase()}
+                HELLO {String(auth?.user?.name || '').toUpperCase()}
               </h1>
               <p className="text-slate-200 font-semibold">
-                AVAILABLE POINTS:{' '}
-                <span id="availablePoints">
-                  {Number(auth.user.points ?? 0).toLocaleString()}
-                </span>{' '}
+                AVAILABLE POINTS{' '}
+                <span id="availablePoints">{Number(points).toLocaleString()}</span>{' '}
                 (Max Points)
               </p>
             </div>
@@ -60,12 +105,8 @@ export default function Dashboard() {
               )}
 
               {!loading && assets.map((asset) => {
-                // Support both keys from backend: has_maintenance OR maintenance
-                const hasMaintenance = (asset.has_maintenance ?? asset.maintenance) === true;
-                // Use maintenance_cost if available; else fall back to points
-                const cost = hasMaintenance
-                  ? Number(asset.maintenance_cost ?? 0)
-                  : Number(asset.points ?? 0);
+                const hasMaintenance  = Boolean(asset?.has_maintenance ?? asset?.maintenance);
+                const maintenanceCost = Number(asset?.maintenance_cost ?? 0);
 
                 return (
                   <article key={asset.id} className="flex border-b border-blue-700 pb-4 gap-4">
@@ -79,37 +120,45 @@ export default function Dashboard() {
                       />
                     </div>
 
-                    {/* Title */}
-                    <div className="flex flex-col justify-center flex-grow">
+                    {/* Title & chips */}
+                    <div className="flex flex-col justify-center flex-grow min-w-0">
                       <h2 className="text-white font-bold text-xl truncate">{asset.title}</h2>
-                    </div>
 
-                    {/* Actions / Cost */}
-                    <div className="flex flex-col items-end justify-between gap-2">
-                      <span className="text-slate-200 text-xs font-semibold tracking-wider">
-                        RE-DOWNLOAD COST
-                      </span>
-
-                      <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
-                        {asset.downloadable && (
-                          <a
-                            href={asset.download_url}
-                            className="inline-flex items-center gap-2 bg-white/90 text-black px-3 py-1 rounded hover:bg-white font-semibold text-sm"
-                          >
-                            DOWNLOAD
-                          </a>
-                        )}
-
-                        {/* Cost chip → now shows maintenance_cost when available */}
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        {/* Points chip */}
                         <span className="bg-amber-300 text-amber-900 px-3 rounded flex items-center gap-1 font-semibold text-sm">
-                          {isFinite(cost) ? cost : 0}
+                          {Number(asset.points ?? 0)}
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" className="inline-block">
                             <circle cx="12" cy="12" r="10" fill="#fbbf24" />
                             <path d="M12 6v6l3 3" stroke="#a16207" strokeWidth="1.5" fill="none" />
                             <circle cx="12" cy="12" r="4" fill="none" stroke="#a16207" strokeWidth="1.5" />
                           </svg>
                         </span>
+
+                        {/* Maintenance chip */}
+                        {hasMaintenance && (
+                          <span className="bg-fuchsia-300 text-fuchsia-900 px-3 rounded font-semibold text-xs tracking-wide">
+                            MAINTENANCE{maintenanceCost > 0 ? `: ${maintenanceCost}` : ''}
+                          </span>
+                        )}
                       </div>
+                    </div>
+
+                    {/* Action */}
+                    <div className="flex flex-col items-end justify-center gap-2">
+                      {asset.downloadable && (
+                        <button
+                          onClick={() => handleDownload(asset)}
+                          disabled={busyId === asset.id}
+                          className={`inline-flex items-center gap-2 px-3 py-1 rounded font-semibold text-sm ${
+                            busyId === asset.id
+                              ? 'bg-white/60 text-black cursor-not-allowed'
+                              : 'bg-white/90 text-black hover:bg-white'
+                          }`}
+                        >
+                          {busyId === asset.id ? 'WORKING…' : 'DOWNLOAD'}
+                        </button>
+                      )}
                     </div>
                   </article>
                 );
