@@ -30,7 +30,7 @@ use App\Http\Controllers\Admin\StorePlanController;
 use App\Http\Controllers\ChatSupportController;
 use App\Http\Controllers\Admin\UserOwnedAssetController;
 use App\Http\Controllers\UserContactUsController;
-
+use App\Http\Controllers\PolicyAboutController;
 /*
 |--------------------------------------------------------------------------
 | Public (Guest)
@@ -57,6 +57,8 @@ Route::post('/assets/{asset}/views', [AssetInteractionController::class, 'viewsS
 Route::get('/contact/settings', [UserContactUsController::class, 'show'])
 ->name('contact.settings');
 
+Route::get('/policy/guest', [PolicyAboutController::class, 'index'])
+    ->name('policy.guest.index');
 /*
 |--------------------------------------------------------------------------
 | Guest Auth

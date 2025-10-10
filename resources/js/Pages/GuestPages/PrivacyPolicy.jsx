@@ -1,14 +1,53 @@
 // resources/js/Pages/GuestPages/PrivacyPolicy.jsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import GuestLayout from '@/Layouts/GuestLayout';
+import axios from 'axios';
 
 const views = ['privacy', 'about'];
 
 export default function PrivacyPolicy() {
   const [currentView, setCurrentView] = useState(0);
 
+  // --- NEW: load privacy / about content from backend ---
+  const [policies, setPolicies] = useState({
+    privacy: { description: '', items: [] },
+    about:   { description: '', items: [] },
+  });
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+    axios.get('/policy/guest')
+      .then(res => {
+        if (!mounted) return;
+        setPolicies({
+          privacy: {
+            description: res.data?.privacy?.description ?? '',
+            items: Array.isArray(res.data?.privacy?.items) ? res.data.privacy.items : [],
+          },
+          about: {
+            description: res.data?.about?.description ?? '',
+            items: Array.isArray(res.data?.about?.items) ? res.data.about.items : [],
+          },
+        });
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setErr('Failed to load policy content.');
+      })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, []);
+
   const handleNext = () => setCurrentView((currentView + 1) % views.length);
   const handlePrev = () => setCurrentView((currentView - 1 + views.length) % views.length);
+
+  // Small helper for decorative icons on list items
+  const iconFor = (i) => ['⚡','🔒','🗑️','✨','✅','🎯','📌','⭐','🧩','💡'][i % 10];
+
+  const active = views[currentView]; // 'privacy' | 'about'
+  const data   = policies[active] || { description: '', items: [] };
 
   return (
     <GuestLayout>
@@ -58,7 +97,7 @@ export default function PrivacyPolicy() {
 
           {/* Main Content Container */}
           <div className="mt-12 mb-4 transition-all duration-500 ease-in-out transform">
-            {views[currentView] === 'privacy' ? (
+            {active === 'privacy' ? (
               <div className="space-y-6">
                 <div className="text-center">
                   <h1 className="text-4xl font-bold text-amber-100 mb-2 drop-shadow-lg">
@@ -68,23 +107,37 @@ export default function PrivacyPolicy() {
                 </div>
 
                 <div className="bg-orange-900/30 border border-orange-300/30 rounded-lg p-6 backdrop-blur-sm">
-                  <p className="mb-4 text-lg text-orange-50 leading-relaxed">
-                    At <span className="text-amber-200 font-bold text-xl">Mind Imagination</span>, we respect your privacy. This policy describes how we collect and use your data.
-                  </p>
+                  {/* Description */}
+                  {loading ? (
+                    <p className="mb-4 text-lg text-orange-50 leading-relaxed animate-pulse">
+                      Loading policy…
+                    </p>
+                  ) : err ? (
+                    <p className="mb-4 text-lg text-red-200 leading-relaxed">
+                      {err}
+                    </p>
+                  ) : (
+                    <p className="mb-4 text-lg text-orange-50 leading-relaxed">
+                      {data.description || 'No privacy content available yet.'}
+                    </p>
+                  )}
 
+                  {/* Bullet Points */}
                   <div className="space-y-3">
-                    <div className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20">
-                      <span className="text-amber-300 text-xl">⚡</span>
-                      <span className="text-orange-50">We collect email, name, and usage data for platform access.</span>
-                    </div>
-                    <div className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20">
-                      <span className="text-amber-300 text-xl">🔒</span>
-                      <span className="text-orange-50">We do not share your data without your consent.</span>
-                    </div>
-                    <div className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20">
-                      <span className="text-amber-300 text-xl">🗑️</span>
-                      <span className="text-orange-50">You can contact support to delete your data anytime.</span>
-                    </div>
+                    {loading ? (
+                      <>
+                        <div className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20 animate-pulse h-14" />
+                        <div className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20 animate-pulse h-14" />
+                        <div className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20 animate-pulse h-14" />
+                      </>
+                    ) : (
+                      (data.items && data.items.length > 0 ? data.items : []).map((item, idx) => (
+                        <div key={idx} className="flex items-start space-x-3 bg-orange-800/20 p-3 rounded-lg border border-orange-400/20">
+                          <span className="text-amber-300 text-xl">{iconFor(idx)}</span>
+                          <span className="text-orange-50">{item}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
@@ -98,15 +151,39 @@ export default function PrivacyPolicy() {
                 </div>
 
                 <div className="bg-orange-900/30 border border-orange-300/30 rounded-lg p-6 backdrop-blur-sm">
-                  <p className="mb-4 text-lg text-orange-50 leading-relaxed">
-                    <span className="text-amber-200 font-bold text-xl">Mind Imagination</span> is a game asset platform providing high-quality assets for developers and creators.
-                  </p>
-                  <div className="bg-orange-800/20 p-4 rounded-lg border border-orange-400/20">
-                    <p className="text-orange-50 leading-relaxed">
-                      We're passionate about enabling your creativity through accessible tools, visual content, and a supportive community.
-                      <span className="text-amber-200 font-semibold"> Level up your game development!</span>
+                  {/* Description */}
+                  {loading ? (
+                    <p className="mb-4 text-lg text-orange-50 leading-relaxed animate-pulse">
+                      Loading about…
                     </p>
-                  </div>
+                  ) : err ? (
+                    <p className="mb-4 text-lg text-red-200 leading-relaxed">
+                      {err}
+                    </p>
+                  ) : (
+                    <p className="mb-4 text-lg text-orange-50 leading-relaxed">
+                      {data.description || 'No about content available yet.'}
+                    </p>
+                  )}
+
+                  {/* Bullet Points (render if present) */}
+                  {(loading || (data.items && data.items.length)) && (
+                    <div className="bg-orange-800/20 p-4 rounded-lg border border-orange-400/20">
+                      {loading ? (
+                        <div className="space-y-3">
+                          <div className="h-4 bg-white/20 rounded animate-pulse" />
+                          <div className="h-4 bg-white/20 rounded animate-pulse" />
+                          <div className="h-4 bg-white/20 rounded animate-pulse" />
+                        </div>
+                      ) : (
+                        <ul className="list-disc list-inside space-y-2 text-orange-50">
+                          {(data.items || []).map((item, idx) => (
+                            <li key={idx} className="leading-relaxed">{item}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
