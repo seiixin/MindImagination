@@ -11,79 +11,28 @@ use Illuminate\Http\Request;
 class LogsController extends Controller
 {
     /**
-     * Get purchase logs
+     * GET /admin/logs/purchases
+     * Paginated purchase logs
      */
-public function purchases(Request $request)
-{
-    $perPage  = (int) ($request->input('per_page', 50)) ?: 50;
-    $dateFrom = $request->input('date_from');
-    $dateTo   = $request->input('date_to');
-    $search   = trim((string) $request->input('search', ''));
-    $searchBy = strtolower((string) $request->input('search_by', 'any'));
-
-    if (!in_array($searchBy, ['email','name','asset','any'], true)) {
-        $searchBy = 'any';
-    }
-
-    $query = Purchase::with(['user', 'asset.category'])
-        ->orderBy('created_at', 'desc');
-
-    if ($dateFrom) $query->whereDate('created_at', '>=', $dateFrom);
-    if ($dateTo)   $query->whereDate('created_at', '<=', $dateTo);
-
-    if ($search !== '') {
-        $query->where(function ($qq) use ($search, $searchBy) {
-            if ($searchBy === 'email') {
-                $qq->whereHas('user', fn($u) => $u->where('email', 'like', "%{$search}%"));
-            } elseif ($searchBy === 'name') {
-                $qq->whereHas('user', fn($u) => $u->where('name', 'like', "%{$search}%"));
-            } elseif ($searchBy === 'asset') {
-                $qq->whereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
-            } else { // any
-                $qq->whereHas('user', fn($u) => $u
-                        ->where('email', 'like', "%{$search}%")
-                        ->orWhere('name', 'like', "%{$search}%"))
-                   ->orWhereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
-            }
-        });
-    }
-
-    $purchases = $query->paginate($perPage);
-
-    return response()->json([
-        'data' => $purchases->items(),
-        'pagination' => [
-            'current_page' => $purchases->currentPage(),
-            'last_page'    => $purchases->lastPage(),
-            'per_page'     => $purchases->perPage(),
-            'total'        => $purchases->total(),
-        ],
-    ]);
-}
-
-    /**
-     * Get download logs (now uses the `downloads` column)
-     */
-// app/Http/Controllers/Admin/LogsController.php
-
-    public function downloads(Request $request)
+    public function purchases(Request $request)
     {
-        $perPage  = (int) ($request->input('per_page', 50)) ?: 50;
+        $perPage  = (int) $request->input('per_page', 50);
+        $perPage  = $perPage > 0 ? min($perPage, 200) : 50;
+
         $dateFrom = $request->input('date_from');
         $dateTo   = $request->input('date_to');
         $search   = trim((string) $request->input('search', ''));
         $searchBy = strtolower((string) $request->input('search_by', 'any'));
 
-        // sanitize searchBy
-        if (!in_array($searchBy, ['email','name','asset','any'], true)) {
+        if (!in_array($searchBy, ['email', 'name', 'asset', 'any'], true)) {
             $searchBy = 'any';
         }
 
-        $query = \App\Models\Download::with(['user', 'asset.category'])
+        $query = Purchase::with(['user:id,name,email', 'asset:id,title,category_id', 'asset.category:id,name'])
             ->orderBy('created_at', 'desc');
 
         if ($dateFrom) $query->whereDate('created_at', '>=', $dateFrom);
-        if ($dateTo)   $query->whereDate('created_at', '<=', $dateTo);
+        if ($dateTo)   $query->whereDate('created_at',   '<=', $dateTo);
 
         if ($search !== '') {
             $query->where(function ($qq) use ($search, $searchBy) {
@@ -93,19 +42,87 @@ public function purchases(Request $request)
                     $qq->whereHas('user', fn($u) => $u->where('name', 'like', "%{$search}%"));
                 } elseif ($searchBy === 'asset') {
                     $qq->whereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
-                } else { // any
+                } else {
                     $qq->whereHas('user', fn($u) => $u
-                            ->where('email', 'like', "%{$search}%")
-                            ->orWhere('name', 'like', "%{$search}%"))
-                    ->orWhereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
+                        ->where('email', 'like', "%{$search}%")
+                        ->orWhere('name',  'like', "%{$search}%"))
+                       ->orWhereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
+                }
+            });
+        }
+
+        $purchases = $query->paginate($perPage);
+
+        return response()->json([
+            'data' => $purchases->items(),
+            'pagination' => [
+                'current_page' => $purchases->currentPage(),
+                'last_page'    => $purchases->lastPage(),
+                'per_page'     => $purchases->perPage(),
+                'total'        => $purchases->total(),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /admin/logs/downloads
+     * Paginated download logs
+     * Exposes:
+     *   - downloads (computed on model: downloads|download_count|points_used)
+     *   - points_used (raw legacy column for admin visibility & export)
+     */
+    public function downloads(Request $request)
+    {
+        $perPage  = (int) $request->input('per_page', 50);
+        $perPage  = $perPage > 0 ? min($perPage, 200) : 50;
+
+        $dateFrom = $request->input('date_from');
+        $dateTo   = $request->input('date_to');
+        $search   = trim((string) $request->input('search', ''));
+        $searchBy = strtolower((string) $request->input('search_by', 'any'));
+
+        if (!in_array($searchBy, ['email', 'name', 'asset', 'any'], true)) {
+            $searchBy = 'any';
+        }
+
+        $query = Download::with(['user:id,name,email', 'asset:id,title,category_id', 'asset.category:id,name'])
+            ->orderBy('created_at', 'desc');
+
+        if ($dateFrom) $query->whereDate('created_at', '>=', $dateFrom);
+        if ($dateTo)   $query->whereDate('created_at',   '<=', $dateTo);
+
+        if ($search !== '') {
+            $query->where(function ($qq) use ($search, $searchBy) {
+                if ($searchBy === 'email') {
+                    $qq->whereHas('user', fn($u) => $u->where('email', 'like', "%{$search}%"));
+                } elseif ($searchBy === 'name') {
+                    $qq->whereHas('user', fn($u) => $u->where('name', 'like', "%{$search}%"));
+                } elseif ($searchBy === 'asset') {
+                    $qq->whereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
+                } else {
+                    $qq->whereHas('user', fn($u) => $u
+                        ->where('email', 'like', "%{$search}%")
+                        ->orWhere('name',  'like', "%{$search}%"))
+                       ->orWhereHas('asset', fn($a) => $a->where('title', 'like', "%{$search}%"));
                 }
             });
         }
 
         $downloads = $query->paginate($perPage);
 
+        // Ensure each row includes explicit integers for admin UI
+        $items = collect($downloads->items())->map(function ($row) {
+            // Accessors: $row->downloads (appended), raw columns still present
+            $row->downloads   = (int) ($row->downloads ?? 0);
+            $row->points_used = (int) ($row->getRawOriginal('points_used') ?? 0);
+            $row->download_count = is_null($row->getRawOriginal('download_count'))
+                ? null
+                : (int) $row->getRawOriginal('download_count');
+            return $row;
+        })->values();
+
         return response()->json([
-            'data' => $downloads->items(),
+            'data' => $items,
             'pagination' => [
                 'current_page' => $downloads->currentPage(),
                 'last_page'    => $downloads->lastPage(),
@@ -116,29 +133,28 @@ public function purchases(Request $request)
     }
 
     /**
-     * Get active games logs
+     * GET /admin/logs/active
+     * Currently active games
      */
     public function activeGames(Request $request)
     {
-        $perPage   = (int) ($request->input('per_page', 50)) ?: 50;
-        $dateFrom  = $request->input('date_from');
-        $dateTo    = $request->input('date_to');
-        $search    = (string) $request->input('search', '');
+        $perPage  = (int) $request->input('per_page', 50);
+        $perPage  = $perPage > 0 ? min($perPage, 200) : 50;
+        $dateFrom = $request->input('date_from');
+        $dateTo   = $request->input('date_to');
+        $search   = (string) $request->input('search', '');
 
-        $query = ActiveGame::with(['user', 'asset.category'])
-            ->active() // Only get currently active games
+        $query = ActiveGame::with(['user:id,name,email', 'asset:id,title,category_id', 'asset.category:id,name'])
+            ->active()
             ->orderBy('started_at', 'desc');
 
-        if ($dateFrom) {
-            $query->whereDate('started_at', '>=', $dateFrom);
-        }
-        if ($dateTo) {
-            $query->whereDate('started_at', '<=', $dateTo);
-        }
+        if ($dateFrom) $query->whereDate('started_at', '>=', $dateFrom);
+        if ($dateTo)   $query->whereDate('started_at',   '<=', $dateTo);
+
         if ($search !== '') {
             $query->whereHas('user', function ($q) use ($search) {
                 $q->where('email', 'like', "%{$search}%")
-                  ->orWhere('name', 'like', "%{$search}%");
+                  ->orWhere('name',  'like', "%{$search}%");
             });
         }
 
@@ -156,27 +172,44 @@ public function purchases(Request $request)
     }
 
     /**
-     * Get logs statistics
-     * - Downloads now sum the `downloads` column
+     * GET /admin/logs/stats
+     * Aggregate counts & sums
+     * - downloads use computed 'downloads'
+     * - includes points_used totals for visibility
      */
     public function stats()
     {
+        // Sum computed downloads by iterating once (keeps correctness with accessor precedence)
+        $totalDownloads = Download::get()->sum(fn($d) => (int) $d->downloads);
+        $todayDownloads = Download::whereDate('created_at', today())->get()->sum(fn($d) => (int) $d->downloads);
+
+        // Legacy points visibility
+        $pointsUsedTotal = (int) Download::sum('points_used');
+        $pointsUsedToday = (int) Download::whereDate('created_at', today())->sum('points_used');
+
         $stats = [
-            'total_purchases'   => Purchase::count(),
-            'total_downloads'   => Download::sum('downloads'),
-            'active_games_count'=> ActiveGame::active()->count(),
-            'today_purchases'   => Purchase::whereDate('created_at', today())->count(),
-            'today_downloads'   => Download::whereDate('created_at', today())->sum('downloads'),
-            'revenue_today'     => Purchase::whereDate('created_at', today())->sum('cost_amount'),
-            'revenue_total'     => Purchase::sum('cost_amount'),
+            'total_purchases'     => Purchase::count(),
+            'total_downloads'     => $totalDownloads,
+            'active_games_count'  => ActiveGame::active()->count(),
+
+            'today_purchases'     => Purchase::whereDate('created_at', today())->count(),
+            'today_downloads'     => $todayDownloads,
+
+            'revenue_today'       => (float) Purchase::whereDate('created_at', today())->sum('cost_amount'),
+            'revenue_total'       => (float) Purchase::sum('cost_amount'),
+
+            // New: points visibility
+            'points_used_total'   => $pointsUsedTotal,
+            'points_used_today'   => $pointsUsedToday,
         ];
 
         return response()->json($stats);
     }
 
     /**
-     * Export logs data
-     * - Downloads CSV shows "Downloads" and uses the `downloads` column
+     * GET /admin/logs/export?type=purchases|downloads|active
+     * CSV exports
+     * - Downloads CSV now includes both "Downloads" and "Points Used"
      */
     public function export(Request $request)
     {
@@ -192,55 +225,57 @@ public function purchases(Request $request)
 
             switch ($type) {
                 case 'purchases':
-                    // Keep as-is if purchases still track points
-                    fputcsv($file, ['Date', 'Email', 'Name', 'Asset', 'Category', 'Points', 'Cost']);
-
-                    Purchase::with(['user', 'asset.category'])->chunk(100, function ($purchases) use ($file) {
-                        foreach ($purchases as $purchase) {
-                            fputcsv($file, [
-                                $purchase->created_at->format('m/d/y'),
-                                $purchase->user->email,
-                                $purchase->user->name,
-                                $purchase->asset->title,
-                                $purchase->asset->category->name,
-                                $purchase->points_spent . ' pts',
-                                '₱' . number_format($purchase->cost_amount, 2),
-                            ]);
-                        }
-                    });
+                    fputcsv($file, ['Date', 'Email', 'Name', 'Asset', 'Category', 'Points Spent', 'Cost']);
+                    Purchase::with(['user', 'asset.category'])
+                        ->orderBy('created_at', 'desc')
+                        ->chunk(200, function ($chunk) use ($file) {
+                            foreach ($chunk as $p) {
+                                fputcsv($file, [
+                                    optional($p->created_at)->format('m/d/y'),
+                                    $p->user->email,
+                                    $p->user->name,
+                                    $p->asset->title,
+                                    optional($p->asset->category)->name,
+                                    (int) ($p->points_spent ?? 0),
+                                    number_format((float) $p->cost_amount, 2, '.', ''),
+                                ]);
+                            }
+                        });
                     break;
 
                 case 'downloads':
-                    // Header + data now use `Downloads`
-                    fputcsv($file, ['Date', 'Email', 'Name', 'Asset', 'Category', 'Downloads']);
-
-                    Download::with(['user', 'asset.category'])->chunk(100, function ($downloads) use ($file) {
-                        foreach ($downloads as $d) {
-                            fputcsv($file, [
-                                $d->created_at->format('m/d/y'),
-                                $d->user->email,
-                                $d->user->name,
-                                $d->asset->title,
-                                $d->asset->category->name,
-                                $d->downloads,
-                            ]);
-                        }
-                    });
+                    // Include both computed Downloads and raw Points Used
+                    fputcsv($file, ['Date', 'Email', 'Name', 'Asset', 'Category', 'Downloads', 'Points Used']);
+                    Download::with(['user', 'asset.category'])
+                        ->orderBy('created_at', 'desc')
+                        ->chunk(200, function ($chunk) use ($file) {
+                            foreach ($chunk as $d) {
+                                fputcsv($file, [
+                                    optional($d->created_at)->format('m/d/y'),
+                                    $d->user->email,
+                                    $d->user->name,
+                                    $d->asset->title,
+                                    optional($d->asset->category)->name,
+                                    (int) $d->downloads,                          // accessor
+                                    (int) ($d->getRawOriginal('points_used') ?? 0), // raw column
+                                ]);
+                            }
+                        });
                     break;
 
                 case 'active':
                     fputcsv($file, ['Date Started', 'Email', 'Name', 'Asset', 'Category']);
-
                     ActiveGame::active()
                         ->with(['user', 'asset.category'])
-                        ->chunk(100, function ($games) use ($file) {
-                            foreach ($games as $game) {
+                        ->orderBy('started_at', 'desc')
+                        ->chunk(200, function ($chunk) use ($file) {
+                            foreach ($chunk as $g) {
                                 fputcsv($file, [
-                                    $game->started_at->format('m/d/y'),
-                                    $game->user->email,
-                                    $game->user->name,
-                                    $game->asset->title,
-                                    $game->asset->category->name,
+                                    optional($g->started_at)->format('m/d/y'),
+                                    $g->user->email,
+                                    $g->user->name,
+                                    $g->asset->title,
+                                    optional($g->asset->category)->name,
                                 ]);
                             }
                         });

@@ -15,36 +15,55 @@ export default function Downloads() {
   const [dateTo, setDateTo] = useState('');
   const [perPage, setPerPage] = useState(50);
 
-  const params = useMemo(() => ({
-    page: 1,
-    per_page: perPage,
-    ...(search ? { search } : {}),
-    ...(searchBy ? { search_by: searchBy } : {}),
-    ...(dateFrom ? { date_from: dateFrom } : {}),
-    ...(dateTo ? { date_to: dateTo } : {}),
-  }), [search, searchBy, dateFrom, dateTo, perPage]);
+  const params = useMemo(
+    () => ({
+      page: 1,
+      per_page: perPage,
+      ...(search ? { search } : {}),
+      ...(searchBy ? { search_by: searchBy } : {}),
+      ...(dateFrom ? { date_from: dateFrom } : {}),
+      ...(dateTo ? { date_to: dateTo } : {}),
+    }),
+    [search, searchBy, dateFrom, dateTo, perPage]
+  );
 
   const formatDateTime = (isoString) => {
     try {
       const d = new Date(isoString);
       if (isNaN(d.getTime())) return isoString ?? '';
       return new Intl.DateTimeFormat('en-PH', {
-        year: 'numeric', month: 'short', day: '2-digit',
-        hour: '2-digit', minute: '2-digit'
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
       }).format(d);
-    } catch { return isoString ?? ''; }
+    } catch {
+      return isoString ?? '';
+    }
   };
 
-  const getCount = (item) =>
-    Number(item?.downloads ?? item?.download_count ?? item?.points_used ?? 0);
+  const safeInt = (v, fallback = 0) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  const getDownloads = (item) =>
+    safeInt(item?.downloads ?? item?.download_count ?? item?.points_used ?? 0);
+
+  const getPointsUsed = (item) =>
+    safeInt(item?.points_used ?? 0);
 
   const fetchPage = async (page = 1, extra = {}) => {
-    const res = await axios.get('/admin/logs/downloads', { params: { ...params, ...extra, page } });
+    const res = await axios.get('/admin/logs/downloads', {
+      params: { ...params, ...extra, page },
+    });
     return res.data;
   };
 
   const fetchData = async (page = 1) => {
-    setLoading(true); setErr(null);
+    setLoading(true);
+    setErr(null);
     try {
       const data = await fetchPage(page);
       setRows(Array.isArray(data?.data) ? data.data : []);
@@ -52,14 +71,17 @@ export default function Downloads() {
     } catch (e) {
       console.error(e);
       setErr('Failed to load download logs.');
-      setRows([]); setPagination(null);
-    } finally { setLoading(false); }
+      setRows([]);
+      setPagination(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchAllFiltered = async () => {
     const first = await fetchPage(1, { per_page: 100 });
     const items = [...(first?.data ?? [])];
-    const last  = first?.pagination?.last_page ?? 1;
+    const last = first?.pagination?.last_page ?? 1;
     for (let p = 2; p <= last; p++) {
       const next = await fetchPage(p, { per_page: 100 });
       if (Array.isArray(next?.data)) items.push(...next.data);
@@ -67,14 +89,16 @@ export default function Downloads() {
     return items;
   };
 
-  const buildExportRows = (arr) => arr.map(item => ({
-    Date: formatDateTime(item?.created_at),
-    Email: item?.user?.email ?? '',
-    Name: item?.user?.name ?? '',
-    Asset: item?.asset?.title ?? '',
-    Category: item?.asset?.category?.name ?? '',
-    Downloads: getCount(item),
-  }));
+  const buildExportRows = (arr) =>
+    arr.map((item) => ({
+      Date: formatDateTime(item?.created_at),
+      Email: item?.user?.email ?? '',
+      Name: item?.user?.name ?? '',
+      Asset: item?.asset?.title ?? '',
+      Category: item?.asset?.category?.name ?? '',
+      Downloads: getDownloads(item),
+      'Points Used': getPointsUsed(item),
+    }));
 
   const exportExcel = async () => {
     try {
@@ -86,10 +110,12 @@ export default function Downloads() {
       const ws = XLSX.utils.json_to_sheet(data);
       ws['!freeze'] = { xSplit: 0, ySplit: 1 };
       XLSX.utils.book_append_sheet(wb, ws, 'Downloads');
-      XLSX.writeFile(wb, `downloads_${new Date().toISOString().slice(0,10)}.xlsx`);
+      XLSX.writeFile(wb, `downloads_${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (e) {
       console.error('Excel export failed:', e);
-    } finally { setExporting(false); }
+    } finally {
+      setExporting(false);
+    }
   };
 
   const exportPDF = async () => {
@@ -105,8 +131,8 @@ export default function Downloads() {
       doc.text('Downloads Report', 40, 36);
       autoTable(doc, {
         startY: 50,
-        head: [['Date', 'Email', 'Name', 'Asset', 'Category', 'Downloads']],
-        body: data.map(r => [r.Date, r.Email, r.Name, r.Asset, r.Category, r.Downloads]),
+        head: [['Date', 'Email', 'Name', 'Asset', 'Category', 'Downloads', 'Points Used']],
+        body: data.map((r) => [r.Date, r.Email, r.Name, r.Asset, r.Category, r.Downloads, r['Points Used']]),
         styles: { fontSize: 9, cellPadding: 6 },
         headStyles: { fillColor: [240, 240, 240] },
         margin: { left: 40, right: 40 },
@@ -116,20 +142,29 @@ export default function Downloads() {
           doc.setFontSize(9);
           doc.text(`Generated: ${new Date().toLocaleString('en-PH')}`, 40, pageH - 12);
           doc.text(`Page ${doc.getNumberOfPages()}`, pageW - 80, pageH - 12);
-        }
+        },
       });
-      doc.save(`downloads_${new Date().toISOString().slice(0,10)}.pdf`);
+      doc.save(`downloads_${new Date().toISOString().slice(0, 10)}.pdf`);
     } catch (e) {
       console.error('PDF export failed:', e);
-    } finally { setExporting(false); }
+    } finally {
+      setExporting(false);
+    }
   };
 
   const applyFilters = () => fetchData(1);
   const resetFilters = () => {
-    setSearch(''); setSearchBy('any'); setDateFrom(''); setDateTo(''); setPerPage(50);
+    setSearch('');
+    setSearchBy('any');
+    setDateFrom('');
+    setDateTo('');
+    setPerPage(50);
   };
 
-  useEffect(() => { fetchData(1); }, []);
+  useEffect(() => {
+    fetchData(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="space-y-3">
@@ -189,7 +224,10 @@ export default function Downloads() {
           </select>
         </div>
         <div className="md:col-span-2 flex gap-2">
-          <button onClick={applyFilters} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+          <button
+            onClick={applyFilters}
+            className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+          >
             Apply
           </button>
           <button onClick={resetFilters} className="px-3 py-2 rounded-lg border hover:bg-gray-50">
@@ -220,6 +258,8 @@ export default function Downloads() {
       <div className="overflow-auto max-h-[65vh] border rounded-lg">
         {loading ? (
           <p className="p-3 text-sm text-gray-500">Loading…</p>
+        ) : err ? (
+          <p className="p-3 text-sm text-red-600">{err}</p>
         ) : (
           <table className="min-w-full">
             <thead>
@@ -230,21 +270,27 @@ export default function Downloads() {
                 <th className="p-2 border">ASSET</th>
                 <th className="p-2 border">CATEGORY</th>
                 <th className="p-2 border text-right">DOWNLOADS</th>
+                <th className="p-2 border text-right">POINTS USED</th>
               </tr>
             </thead>
             <tbody>
-              {rows.length ? rows.map((item, i) => (
-                <tr key={item?.id ?? i} className="hover:bg-gray-50">
-                  <td className="p-2 border">{formatDateTime(item?.created_at)}</td>
-                  <td className="p-2 border">{item?.user?.email ?? '—'}</td>
-                  <td className="p-2 border">{item?.user?.name ?? '—'}</td>
-                  <td className="p-2 border">{item?.asset?.title ?? '—'}</td>
-                  <td className="p-2 border">{item?.asset?.category?.name ?? '—'}</td>
-                  <td className="p-2 border text-right">{getCount(item)}</td>
-                </tr>
-              )) : (
+              {rows.length ? (
+                rows.map((item, i) => (
+                  <tr key={item?.id ?? i} className="hover:bg-gray-50">
+                    <td className="p-2 border">{formatDateTime(item?.created_at)}</td>
+                    <td className="p-2 border">{item?.user?.email ?? '—'}</td>
+                    <td className="p-2 border">{item?.user?.name ?? '—'}</td>
+                    <td className="p-2 border">{item?.asset?.title ?? '—'}</td>
+                    <td className="p-2 border">{item?.asset?.category?.name ?? '—'}</td>
+                    <td className="p-2 border text-right">{getDownloads(item)}</td>
+                    <td className="p-2 border text-right">{getPointsUsed(item)}</td>
+                  </tr>
+                ))
+              ) : (
                 <tr>
-                  <td colSpan={6} className="p-3 text-sm text-gray-500 text-center">No results</td>
+                  <td colSpan={7} className="p-3 text-sm text-gray-500 text-center">
+                    No results
+                  </td>
                 </tr>
               )}
             </tbody>
