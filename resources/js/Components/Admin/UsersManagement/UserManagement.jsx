@@ -454,7 +454,7 @@ export default function UserManagement({ selectedUser, onBack, defaultFreeRegPoi
   const selectFields = [
     { key: 'verificationStatus', label: 'Verification Status', options: ['verified', 'unverified', 'pending'] },
     { key: 'activeStatus', label: 'Active Status', options: ['enabled', 'disabled'] },
-    { key: 'access', label: 'Access Role', options: ['admin', 'editor', 'viewer'] },
+    { key: 'access', label: 'Access Role', options: ['admin', 'viewer'] },
   ];
 
   return (
