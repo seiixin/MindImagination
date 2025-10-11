@@ -24,6 +24,28 @@ if (typeof window !== "undefined") {
   if (token) axios.defaults.headers.common["X-CSRF-TOKEN"] = token;
 }
 
+/** Normalize any media path to a real, public URL. */
+function normalizeMediaUrl(u) {
+  if (!u) return null;
+  const s = String(u).trim();
+  // absolute web URLs
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  // already public
+  if (s.startsWith("/storage/")) return s;
+  // strip leading slashes
+  const clean = s.replace(/^\/+/, "");
+  // common Laravel outputs to normalize
+  if (clean.startsWith("public/storage/")) return "/" + clean.replace(/^public\//, "");
+  if (clean.startsWith("storage/"))        return "/" + clean;            // -> /storage/...
+  if (clean.startsWith("assets/"))         return "/storage/" + clean;    // -> /storage/assets/...
+  // bare filename (png/jpg/webp/gif/svg/mp4/mov/webm)
+  if (/^[\w.-]+\.(png|jpe?g|webp|gif|svg|mp4|mov|webm)$/i.test(clean)) {
+    return "/storage/assets/" + clean;
+  }
+  // last resort: make root-relative so it's not resolved under /assets/<slug>
+  return "/" + clean;
+}
+
 function parseSubImages(sub) {
   if (!sub) return [];
   if (Array.isArray(sub)) return sub.filter(Boolean);
@@ -102,15 +124,18 @@ export default function AssetDetails() {
 
   // ---------------- Media ----------------
   const images = useMemo(() => {
-    const base = image_url || cover_image_path || file_path || null;
-    const subs = parseSubImages(sub_image_path);
+    const baseRaw = image_url || cover_image_path || file_path || null;
+    const subsRaw = parseSubImages(sub_image_path);
+    const base = normalizeMediaUrl(baseRaw);
+    const subs = subsRaw.map(normalizeMediaUrl);
     const seen = new Set();
     return [base, ...subs].filter((u) => u && !seen.has(u) && seen.add(u));
   }, [image_url, cover_image_path, file_path, sub_image_path]);
 
   // Put VIDEO FIRST (if present), then images
   const media = useMemo(() => {
-    const vid = video_path ? [{ type: "video", src: video_path }] : [];
+    const vidSrc = normalizeMediaUrl(video_path);
+    const vid = vidSrc ? [{ type: "video", src: vidSrc }] : [];
     const imgItems = images.map((src) => ({ type: "image", src }));
     return [...vid, ...imgItems];
   }, [images, video_path]);
@@ -472,8 +497,7 @@ export default function AssetDetails() {
     setIsVisible(false); // fade-out current
     setTimeout(() => {
       if (!isMounted.current) return;
-      const mod =
-        ((nextIndex % media.length) + media.length) % media.length;
+      const mod = ((nextIndex % media.length) + media.length) % media.length;
       setActiveIndex(mod); // switch content while hidden
       setIsVisible(true);  // fade-in new
       setTimeout(() => {
@@ -552,7 +576,7 @@ export default function AssetDetails() {
                 <div className="absolute inset-0">
                   <video
                     ref={videoRef}
-                    src={active.src}
+                    src={active?.src}
                     controls
                     autoPlay
                     playsInline
@@ -975,7 +999,7 @@ export default function AssetDetails() {
             <X size={28} />
           </button>
           <img
-            src={lightboxSrc}
+            src={normalizeMediaUrl(lightboxSrc)}
             className="max-h-[90vh] max-w-[90vw] rounded-2xl"
           />
         </div>
