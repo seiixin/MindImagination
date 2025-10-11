@@ -41,13 +41,6 @@ class UserController extends Controller
     /**
      * Lightweight JSON list for dropdowns/selects.
      * Returns id, name, email (email optional).
-     *
-     * Query params:
-     *  - q: string (search by name/email/username)
-     *  - limit: int (default 100, max 500)
-     *  - exclude_ids[]: array<int> (exclude specific user ids)
-     *  - only_enabled: bool (if users table has active_status column)
-     *  - include_email: bool (default true)
      */
     public function light(Request $request)
     {
@@ -60,12 +53,10 @@ class UserController extends Controller
 
         $query = User::query()->orderBy('name');
 
-        // Select minimal columns first; add email if requested.
         $select = ['id', 'name'];
         if ($includeEmail) {
             $select[] = 'email';
         }
-        // Add username as searchable if present
         if (Schema::hasColumn('users', 'username')) {
             $select[] = 'username';
         }
@@ -93,8 +84,6 @@ class UserController extends Controller
 
         $users = $query->limit($limit)->get();
 
-        // If username was selected for search convenience, hide it by default in payload
-        // unless explicitly requested (keep payload minimal for dropdowns).
         $payload = $users->map(function ($u) use ($includeEmail) {
             return array_filter([
                 'id'    => $u->id,
@@ -109,6 +98,7 @@ class UserController extends Controller
     /**
      * Store a newly created user.
      * Applies "Free Registration Points" if userPoints is not provided.
+     * Also auto-syncs is_admin with role.
      */
     public function store(Request $request)
     {
@@ -129,12 +119,15 @@ class UserController extends Controller
             ]);
 
             // Configurable default free points
-            $defaultFreePoints = config('app.default_free_points', 100);
+            $defaultFreePoints = (int) config('app.default_free_points', 100);
+
+            $role     = $validated['access'];
+            $isAdmin  = $role === 'admin' ? 1 : 0;
 
             $userData = [
                 'name'                 => $validated['fullName'],
                 'username'             => $validated['userName'],
-                'email'                => $validated['emailAddress'],
+                'email'                => strtolower($validated['emailAddress']),
                 'mobile_number'        => $validated['mobileNumber'],
                 'address'              => $validated['address'] ?? null,
                 'points'               => isset($validated['userPoints'])
@@ -143,7 +136,8 @@ class UserController extends Controller
                 'password'             => Hash::make($validated['password']),
                 'verification_status'  => $validated['verificationStatus'],
                 'active_status'        => $validated['activeStatus'],
-                'role'                 => $validated['access'],
+                'role'                 => $role,
+                'is_admin'             => $isAdmin, // ✅ auto-sync
             ];
 
             $user = User::create($userData);
@@ -172,6 +166,7 @@ class UserController extends Controller
      * Update an existing user.
      * Points update only if userPoints is explicitly provided.
      * If user is disabled, purge their sessions and rotate remember token.
+     * Auto-sync is_admin with role.
      */
     public function update(Request $request, User $user)
     {
@@ -198,15 +193,19 @@ class UserController extends Controller
             // Capture old status BEFORE update
             $wasEnabled = $user->getOriginal('active_status') === 'enabled';
 
+            $role    = $validated['access'];
+            $isAdmin = $role === 'admin' ? 1 : 0;
+
             $updateData = [
                 'name'                 => $validated['fullName'],
                 'username'             => $validated['userName'],
-                'email'                => $validated['emailAddress'],
+                'email'                => strtolower($validated['emailAddress']),
                 'mobile_number'        => $validated['mobileNumber'],
                 'address'              => $validated['address'] ?? null,
                 'verification_status'  => $validated['verificationStatus'],
                 'active_status'        => $validated['activeStatus'],
-                'role'                 => $validated['access'],
+                'role'                 => $role,
+                'is_admin'             => $isAdmin, // ✅ auto-sync
             ];
 
             // Only set points if explicitly provided
