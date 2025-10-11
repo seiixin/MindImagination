@@ -28,7 +28,7 @@ export default function Navigation() {
         {/* LEFT cluster: logo + Mind Imagination | Game Assets - Store */}
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex items-center gap-3 pr-2 mr-2 border-r border-white/20">
-            <img src="/Images/logo.png" alt="Logo" className="h-7 shrink-0" />
+            <img src="/Images/Logo.png" alt="Logo" className="h-7 shrink-0" />
             <span className="font-semibold tracking-widest text-sm whitespace-nowrap">
               MIND IMAGINATION
             </span>

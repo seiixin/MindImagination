@@ -5,7 +5,7 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 
 // Controllers
-use App\Http\Controllers\StorefrontController;
+use App\Http\Controllers\StoreFrontController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 use App\Http\Controllers\ProfileController;
@@ -297,3 +297,23 @@ Route::middleware(['auth', 'verified', 'is_admin'])
             Route::post  ('/views/generate',  'viewsGenerate')->name('views.generate');
         });
     });
+    
+
+
+use Google\Client as Google_Client;
+
+Route::get('/test-drive', function () {
+    $client = new Google_Client();
+    $client->setClientId(env('GOOGLE_DRIVE_CLIENT_ID'));
+    $client->setClientSecret(env('GOOGLE_DRIVE_CLIENT_SECRET'));
+    $client->setAccessType('offline');
+
+    try {
+        $token = env('GOOGLE_DRIVE_REFRESH_TOKEN');
+        $client->refreshToken($token);
+        $access = $client->getAccessToken();
+        dd($access);
+    } catch (\Exception $e) {
+        dd('Error: ' . $e->getMessage());
+    }
+});
