@@ -52,7 +52,6 @@ export default function AdminContactSettings() {
 
         <div className="bg-white shadow border border-gray-200 rounded-xl p-6 space-y-6">
           {[
-            { label: 'Portforward Email Address', name: 'email', type: 'email' },
             { label: 'Facebook URL Link', name: 'facebook' },
             { label: 'Discord URL Link', name: 'discord' },
             { label: 'Phone Number', name: 'phone' },
