@@ -142,119 +142,122 @@ class PurchaseController extends Controller
      *  - Else: Settings toggle > mode group > all capabilities.
      *  - Always returns old front-end shape: data.attributes.redirect.checkout_url
      */
-    public function createSource(Request $request)
-    {
-        $data = $request->validate([
-            'plan_id'   => ['required', 'exists:store_plans,id'],
-            'mode'      => ['nullable','in:all,ewallet,bank,cards'],
-            'force_all' => ['nullable','boolean'],
-            'type'      => ['nullable','string'], // legacy; ignored for Checkout
-        ]);
+public function createSource(Request $request)
+{
+    $data = $request->validate([
+        'plan_id'   => ['required', 'exists:store_plans,id'],
+        'mode'      => ['nullable','in:all,ewallet,bank,cards'],
+        'force_all' => ['nullable','boolean'],
+        'type'      => ['nullable','string'], // legacy; ignored for Checkout
+    ]);
 
-        $secret = $this->paymongoSecret();
-        if (!$secret) {
-            return response()->json(['message' => 'PayMongo secret key is not configured.'], 500);
-        }
-        $env = $this->envFromSecret($secret);
-
-        $plan = StorePlan::findOrFail($data['plan_id']);
-        $amountCentavos = (int) round(((float) $plan->price) * 100);
-
-        // DEBUG / FORCE: if requested, skip capabilities and push all known methods.
-        $forceAll = (bool) ($data['force_all'] ?? false);
-        $forceAll = $forceAll || (bool) config('services.paymongo.force_all_methods', false);
-
-        if ($forceAll) {
-            $final = $this->allKnownMethods(); // may still fail if merchant truly can't use them
-        } else {
-            // Normal safe flow
-            $capabilities = $this->fetchCapabilities($secret);
-            if (empty($capabilities)) {
-                return response()->json([
-                    'message' => 'No enabled payment methods for this environment. Please enable at least one in your PayMongo account.',
-                ], 422);
-            }
-
-            // Settings toggle > mode group > all
-            $configured = $this->readConfiguredMethods($env); // may be null
-            if ($configured && is_array($configured)) {
-                $desired = $configured;
-            } else {
-                $mode    = $data['mode'] ?? 'all';
-                $groups  = $this->methodGroups();
-                $desired = $groups[$mode] ?? null;
-                if ($desired === null) {
-                    $desired = $capabilities; // 'all'
-                }
-            }
-
-            $final = array_values(array_intersect($desired, $capabilities));
-            if (empty($final)) {
-                $final = $capabilities;
-            }
-        }
-
-        // Build Checkout payload
-        $payload = [
-            'data' => [
-                'attributes' => [
-                    'description'          => 'Points purchase',
-                    'line_items'           => [[
-                        'name'     => $plan->name,
-                        'amount'   => $amountCentavos,
-                        'currency' => 'PHP',
-                        'quantity' => 1,
-                    ]],
-                    'payment_method_types' => $final,
-                    'send_email_receipt'   => false,
-                    'success_url'          => $this->successUrl(),
-                    'cancel_url'           => $this->failedUrl(),
-                    'metadata'             => [
-                        'purpose'   => 'points_topup',
-                        'user_id'   => (string) $request->user()->id,
-                        'plan_id'   => (string) $plan->id,
-                        'plan_name' => (string) $plan->name,
-                        'plan_pts'  => (string) ((int) $plan->points),
-                        'plan_php'  => number_format((float) $plan->price, 2, '.', ''),
-                    ],
-                ],
-            ],
-        ];
-
-        // Create Checkout Session
-        $resp = Http::withBasicAuth($secret, '')
-            ->acceptJson()
-            ->post('https://api.paymongo.com/v1/checkout_sessions', $payload);
-
-        if (!$resp->successful()) {
-            return response()->json([
-                'message'  => 'Failed to create Checkout Session.',
-                'sent'     => $payload,
-                'response' => $resp->json(),
-            ], $resp->status() ?: 422);
-        }
-
-        $session = $resp->json();
-        $sessionId   = data_get($session, 'data.id');
-        $checkoutUrl = data_get($session, 'data.attributes.checkout_url');
-
-        if (!$checkoutUrl) {
-            return response()->json([
-                'message'  => 'Checkout URL not present in response.',
-                'response' => $session,
-            ], 500);
-        }
-
-        // Old front-end shape (no JSX changes needed)
-        return response()->json([
-            'data' => [
-                'id' => $sessionId,
-                'attributes' => [
-                    'redirect' => ['checkout_url' => $checkoutUrl],
-                ],
-            ],
-        ]);
+    $secret = $this->paymongoSecret();
+    if (!$secret) {
+        return response()->json(['message' => 'PayMongo secret key is not configured.'], 500);
     }
+    $env = $this->envFromSecret($secret);
+
+    $plan = StorePlan::findOrFail($data['plan_id']);
+    $amountCentavos = (int) round(((float) $plan->price) * 100);
+
+    // DEBUG / FORCE: if requested, skip capabilities and push all known methods.
+    $forceAll = (bool) ($data['force_all'] ?? false);
+    $forceAll = $forceAll || (bool) config('services.paymongo.force_all_methods', false);
+
+    if ($forceAll) {
+        $final = $this->allKnownMethods(); // may still fail if merchant truly can't use them
+    } else {
+        // Normal safe flow
+        $capabilities = $this->fetchCapabilities($secret);
+        if (empty($capabilities)) {
+            return response()->json([
+                'message' => 'No enabled payment methods for this environment. Please enable at least one in your PayMongo account.',
+            ], 422);
+        }
+
+        // Settings toggle > mode group > all
+        $configured = $this->readConfiguredMethods($env); // may be null
+        if ($configured && is_array($configured)) {
+            $desired = $configured;
+        } else {
+            $mode    = $data['mode'] ?? 'all';
+            $groups  = $this->methodGroups();
+            $desired = $groups[$mode] ?? null;
+            if ($desired === null) {
+                $desired = $capabilities; // 'all'
+            }
+        }
+
+        $final = array_values(array_intersect($desired, $capabilities));
+        if (empty($final)) {
+            $final = $capabilities;
+        }
+    }
+
+    // Build Checkout payload
+    $payload = [
+        'data' => [
+            'attributes' => [
+                'description'          => 'Points purchase',
+                'line_items'           => [[
+                    'name'     => $plan->name,
+                    'amount'   => $amountCentavos,
+                    'currency' => 'PHP',
+                    'quantity' => 1,
+                ]],
+                'payment_method_types' => $final,
+                'send_email_receipt'   => false,
+                'success_url'          => $this->successUrl(),
+                'cancel_url'           => $this->failedUrl(),
+                'metadata'             => [
+                    'purpose'   => 'points_topup',
+                    'user_id'   => (string) $request->user()->id,
+                    'plan_id'   => (string) $plan->id,
+                    'plan_name' => (string) $plan->name,
+                    'plan_pts'  => (string) ((int) $plan->points),
+                    'plan_php'  => number_format((float) $plan->price, 2, '.', ''),
+                ],
+            ],
+        ],
+    ];
+
+    // Create Checkout Session
+    $resp = Http::withBasicAuth($secret, '')->acceptJson()->post('https://api.paymongo.com/v1/checkout_sessions', $payload);
+
+    if (!$resp->successful()) {
+        return response()->json([
+            'message'  => 'Failed to create Checkout Session.',
+            'sent'     => $payload,
+            'response' => $resp->json(),
+        ], $resp->status() ?: 422);
+    }
+
+    $session = $resp->json();
+    $sessionId   = data_get($session, 'data.id');
+    $checkoutUrl = data_get($session, 'data.attributes.checkout_url');
+
+    if (!$checkoutUrl) {
+        return response()->json([
+            'message'  => 'Checkout URL not present in response.',
+            'response' => $session,
+        ], 500);
+    }
+
+    // After successful payment, add points to the user's account
+    $user = $request->user();
+    $user->points = (int) ($user->points ?? 0) + (int) $plan->points; // Add points from plan
+    $user->save();
+
+    // Old front-end shape (no JSX changes needed)
+    return response()->json([
+        'data' => [
+            'id' => $sessionId,
+            'attributes' => [
+                'redirect' => ['checkout_url' => $checkoutUrl],
+            ],
+        ],
+    ]);
+}
 
     /** Optional admin endpoints (no UI required; use Postman/cURL) */
 
