@@ -1,7 +1,7 @@
 // resources/js/Pages/Dashboard.jsx
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, usePage, Link } from '@inertiajs/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Swal from 'sweetalert2';
 
 export default function Dashboard() {
@@ -17,6 +17,11 @@ export default function Dashboard() {
     try { return route(name, params); } catch { return '#'; }
   };
 
+  const jsonHeaders = useMemo(() => ({
+    'Accept': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  }), []);
+
   const showError = async (title = 'Oops!', text = 'Something went wrong.') => {
     await Swal.fire({ icon: 'error', title, text, confirmButtonText: 'OK' });
   };
@@ -31,28 +36,78 @@ export default function Dashboard() {
       showConfirmButton: false,
     });
 
+  // Extract human error from a fetch Response
+  const extractErrorMessage = async (res) => {
+    try {
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        const j = await res.json();
+        // Laravel validation/abort patterns
+        if (typeof j?.message === 'string' && j.message.trim()) return j.message;
+        if (typeof j?.error === 'string' && j.error.trim()) return j.error;
+        if (typeof j?.errors === 'object' && j?.errors) {
+          const first = Object.values(j.errors)?.[0];
+          if (Array.isArray(first) && first[0]) return String(first[0]);
+        }
+        // Custom preview payloads sometimes include message
+        if (j?.code === 'NOT_ENOUGH_POINTS') return 'Not enough points';
+      } else {
+        const t = await res.text();
+        if (t && t.length < 500) return t;
+      }
+    } catch { /* ignore */ }
+    // Fallback by status
+    if (res.status === 422) return 'Not enough points';
+    if (res.status === 409) return 'Confirmation required';
+    if (res.status === 403) return 'You do not have access to this asset.';
+    if (res.status === 404) return 'File not found.';
+    return `Request failed (HTTP ${res.status}).`;
+  };
+
   useEffect(() => {
     const url = r('user.owned-assets.index');
     setLoading(true);
-    fetch(url, { credentials: 'same-origin' })
-      .then(res => res.json())
-      .then(json => setAssets(Array.isArray(json?.data) ? json.data : []))
-      .catch(() => setAssets([]))
+    fetch(url, { credentials: 'same-origin', headers: jsonHeaders })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await extractErrorMessage(res));
+        return res.json();
+      })
+      .then(json => {
+        const list = Array.isArray(json?.data) ? json.data : [];
+        setAssets(list);
+      })
+      .catch(async (e) => {
+        setAssets([]);
+        await showError('Load Failed', e?.message || 'Unable to load your assets.');
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDownload = async (asset) => {
     if (!asset?.downloadable || busyId === asset.id) return;
 
+    // If API already told us it's blocked, stop early with the same message.
+    if (asset?.downloadable_now === false) {
+      const reason = asset?.blocked_reason || 'Not enough points';
+      return showError('Download Blocked', reason);
+    }
+
     setBusyId(asset.id);
     try {
-      // 1) PREVIEW (GET)
-      const previewUrl = asset.preview_url || r('user.owned-assets.preview', asset.id);
-      const previewRes = await fetch(previewUrl, { credentials: 'same-origin' });
+      // 1) PREVIEW (GET) — check cost/affordability
+      const previewUrl =
+        asset.preview_url ||
+        r('user.owned-assets.preview', asset.id);
+
+      const previewRes = await fetch(previewUrl, {
+        credentials: 'same-origin',
+        headers: jsonHeaders,
+      });
 
       if (!previewRes.ok) {
-        const t = await previewRes.text();
-        await showError('Preview Failed', t || 'Failed to check download cost.');
+        // Bubble up the exact preview error
+        const msg = await extractErrorMessage(previewRes);
+        await showError('Preview Failed', msg);
         return;
       }
 
@@ -60,56 +115,52 @@ export default function Dashboard() {
       const costNow   = Number(preview?.cost_now ?? 0);
       const canAfford = Boolean(preview?.can_afford ?? true);
 
-      // If they can’t afford, offer Buy Points
+      // Not enough points → stop with proper message
       if (costNow > 0 && !canAfford) {
         const buy = await Swal.fire({
-          icon: 'warning',
-          title: 'Insufficient points',
+          icon: 'error',
+          title: 'Not enough points',
           text: `You need ${costNow} points to re-download this file.`,
           showCancelButton: true,
           confirmButtonText: 'Buy Points',
-          cancelButtonText: 'Cancel',
+          cancelButtonText: 'Close',
           reverseButtons: true,
         });
-        if (buy.isConfirmed) {
-          window.location.assign(r('buy-points'));
-        }
+        if (buy.isConfirmed) window.location.assign(r('buy-points'));
         return;
       }
 
-      // 2) SweetAlert2 CONFIRM
-      const confirmHtml =
-        costNow > 0
-          ? `<div class="text-left">
-               <p class="mb-2">This download costs <b>${costNow}</b> points (maintenance).</p>
-               <p class="text-xs opacity-80">Points will be deducted upon download.</p>
-             </div>`
-          : `<div class="text-left">
-               <p class="mb-2"><b>First download is free.</b></p>
-               <p class="text-xs opacity-80">Maintenance may apply on your next download.</p>
-             </div>`;
+      // 2) CONFIRM (only if maintenance cost applies)
+      if (costNow > 0) {
+        const result = await Swal.fire({
+          icon: 'warning',
+          title: 'Confirm download',
+          showCancelButton: true,
+          confirmButtonText: 'Download',
+          cancelButtonText: 'Cancel',
+          reverseButtons: true,
+          focusConfirm: false,
+        });
+        if (!result.isConfirmed) return;
+      } else {
+        // First-time free message (optional)
+        await Swal.fire({
+          icon: 'info',
+          title: 'First download is free',
+          text: 'Maintenance points may apply on your next download.',
+          confirmButtonText: 'Continue',
+        });
+      }
 
-      const result = await Swal.fire({
-        icon: costNow > 0 ? 'warning' : 'info',
-        title: 'Confirm download',
-        html: confirmHtml,
-        showCancelButton: true,
-        confirmButtonText: 'Download',
-        cancelButtonText: 'Cancel',
-        reverseButtons: true,
-        focusConfirm: false,
-      });
-
-      if (!result.isConfirmed) return;
-
-      // 3) DOWNLOAD VIA GET (?confirm=1) — no CSRF needed
+      // 3) DOWNLOAD (GET with ?confirm=1) but request JSON so server returns {url}
       const base =
         asset.download_url ||
-        r('user.owned-assets.download.get', asset.id) ||
-        r('user.owned-assets.download', asset.id);
+        r('user.owned-assets.download.get', asset.id) || // if you have a named GET route
+        r('user.owned-assets.download', asset.id);       // fallback
+
       const dlUrl = `${base}${base.includes('?') ? '&' : '?'}confirm=1`;
 
-      // Optional “Starting…” toast (fires immediately)
+      // Show loading while we request a signed URL / response
       Swal.fire({
         title: 'Preparing your download…',
         allowEscapeKey: false,
@@ -117,15 +168,31 @@ export default function Dashboard() {
         didOpen: () => Swal.showLoading(),
       });
 
-      // Keep UI points in sync locally (server does the real deduction)
-      if (costNow > 0) {
-        setPoints((p) => Math.max(0, Number(p || 0) - costNow));
+      const dlRes = await fetch(dlUrl, {
+        credentials: 'same-origin',
+        headers: jsonHeaders,
+      });
+
+      if (!dlRes.ok) {
+        const msg = await extractErrorMessage(dlRes);
+        await showError('Download Error', msg);
+        return;
       }
 
-      // 4) Navigate — server will redirect/stream the file
-      window.location.assign(dlUrl);
-      // If the page continues (e.g., pop-up blocked), close loader after a short while
-      setTimeout(() => Swal.close(), 3000);
+      // Expect { url: "..." }
+      const payload = await dlRes.json();
+      if (payload?.url) {
+        // Update local points after confirmed deduction
+        if (Number(costNow) > 0) {
+          setPoints((p) => Math.max(0, Number(p || 0) - Number(costNow)));
+        }
+        Swal.close();
+        window.location.assign(payload.url);
+        // Optional success toast
+        setTimeout(() => showToast('Download started'), 400);
+      } else {
+        await showError('Download Error', 'No download URL returned.');
+      }
     } catch (e) {
       console.error(e);
       await showError('Download Error', e?.message || 'Please try again.');
@@ -170,8 +237,16 @@ export default function Dashboard() {
               )}
 
               {!loading && assets.map((asset) => {
-                const hasMaintenance  = Boolean(asset?.has_maintenance ?? asset?.maintenance);
-                const maintenanceCost = Number(asset?.maintenance_cost ?? 0);
+                const hasMaintenance   = Boolean(asset?.has_maintenance ?? asset?.maintenance);
+                const maintenanceCost  = Number(asset?.maintenance_cost ?? 0);
+                const costNow          = Number(asset?.cost_now ?? 0);
+                const downloadableNow  = asset?.downloadable_now !== undefined ? Boolean(asset.downloadable_now) : true;
+                const blockedReason    = asset?.blocked_reason || (costNow > 0 && !Boolean(asset?.can_afford) ? 'Not enough points' : null);
+
+                const buttonDisabled =
+                  busyId === asset.id ||
+                  !asset?.downloadable ||
+                  downloadableNow === false;
 
                 return (
                   <article key={asset.id} className="flex border-b border-blue-700 pb-4 gap-4">
@@ -202,8 +277,36 @@ export default function Dashboard() {
 
                         {/* Maintenance chip */}
                         {hasMaintenance && (
-                          <span className="bg-fuchsia-300 text-fuchsia-900 px-3 rounded font-semibold text-xs tracking-wide">
-                            MAINTENANCE{maintenanceCost > 0 ? `: ${maintenanceCost}` : ''}
+                          <span className="bg-fuchsia-300 text-fuchsia-900 px-3 rounded font-semibold text-xs tracking-wide inline-flex items-center gap-1">
+                            <span>MAINTENANCE</span>
+                            {maintenanceCost > 0 && (
+                              <span className="inline-flex items-center gap-1">                          
+                                <span>:</span>
+                                {/* coin icon */}
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 24 24"
+                                  width="14"
+                                  height="14"
+                                  aria-hidden="true"
+                                  className="inline-block"
+                                >
+                                  <circle cx="12" cy="12" r="10" fill="#fbbf24" />
+                                  <path d="M12 6v6l3 3" stroke="#a16207" strokeWidth="1.5" fill="none" />
+                                  <circle cx="12" cy="12" r="4" fill="none" stroke="#a16207" strokeWidth="1.5" />
+                                </svg>
+                                <span>{maintenanceCost}</span>
+                              </span>
+                            )}
+                          </span>
+                        )}
+
+
+                        {/* Cost-now chip (when sent by API) */}
+                        {/* Blocked reason chip */}
+                        {blockedReason && (
+                          <span className="bg-rose-300 text-rose-900 px-3 rounded font-semibold text-xs tracking-wide">
+                            {blockedReason.toUpperCase()}
                           </span>
                         )}
                       </div>
@@ -214,14 +317,15 @@ export default function Dashboard() {
                       {asset.downloadable && (
                         <button
                           onClick={() => handleDownload(asset)}
-                          disabled={busyId === asset.id}
+                          disabled={buttonDisabled}
+                          title={blockedReason || ''}
                           className={`inline-flex items-center gap-2 px-3 py-1 rounded font-semibold text-sm ${
-                            busyId === asset.id
+                            buttonDisabled
                               ? 'bg-white/60 text-black cursor-not-allowed'
                               : 'bg-white/90 text-black hover:bg-white'
                           }`}
                         >
-                          {busyId === asset.id ? 'WORKING…' : 'DOWNLOAD'}
+                          {busyId === asset.id ? 'WORKING…' : (downloadableNow === false ? 'BLOCKED' : 'DOWNLOAD')}
                         </button>
                       )}
                     </div>
