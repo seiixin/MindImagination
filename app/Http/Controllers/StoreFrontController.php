@@ -34,17 +34,14 @@ class StorefrontController extends Controller
             Schema::hasColumn('assets', 'category_id') ? 'category_id' : null,
         ]));
 
-        // -------- Query (with live counts & avg rating)
+        // -------- Query (live counts + avg rating aliased as `avg_rating`)
         $assetsQuery = Asset::query()
             ->when(Schema::hasColumn('assets', 'is_published'), fn ($q) => $q->where('is_published', 1))
             ->withCount(['comments', 'favorites', 'views'])
-            ->when(
-                method_exists(app('db')->connection()->getQueryGrammar(), 'compileAverage'),
-                fn ($q) => $q->withAvg('ratings', 'rating') // adds alias ratings_avg_rating
-            )
-            // Eager-load category with NAME (IMPORTANT)
+            // ✅ Force alias to match FE key exactly
+            ->withAvg('ratings as avg_rating', 'rating')
+            // Eager-load category with name and default pricing/points
             ->when(Schema::hasColumn('assets', 'category_id'), fn ($q) => $q->with([
-                // expect relation Asset::belongsTo(StoreCategory::class, 'category_id')->as('category')
                 'category:id,name,additional_points,purchase_cost',
             ]))
             ->latest('id')
@@ -69,7 +66,7 @@ class StorefrontController extends Controller
             $ownedIds = $ownedQuery->pluck('asset_id')->all();
         }
 
-        // -------- Map to frontend payload (now includes category_name)
+        // -------- Map to frontend payload (now includes category_name and avg_rating)
         $assets = $assetsCollection->map(function ($a) use ($ownedIds) {
             $slug = (Schema::hasColumn('assets', 'slug') && !empty($a->slug))
                 ? $a->slug
@@ -79,10 +76,11 @@ class StorefrontController extends Controller
                 ? $a->cover_image_path
                 : $a->file_path;
 
-            $avg = isset($a->ratings_avg_rating) ? (float) $a->ratings_avg_rating : 0.0;
+            // ✅ Use the aliased aggregate from withAvg
+            $avg = isset($a->avg_rating) ? (float) $a->avg_rating : 0.0;
 
             // Pull from relation safely
-            $categoryName = optional($a->category)->name; // <<--- HERE
+            $categoryName   = optional($a->category)->name;
             $categoryPoints = optional($a->category)->additional_points;
             $categoryPrice  = optional($a->category)->purchase_cost;
 
@@ -94,7 +92,7 @@ class StorefrontController extends Controller
                 'description'     => $a->description ?? null,
                 'points'          => $a->points ?? $categoryPoints,
                 'price'           => $a->price  ?? $categoryPrice,
-                'category_name'   => $categoryName ?? 'Uncategorized', // <<--- send to FE
+                'category_name'   => $categoryName ?? 'Uncategorized',
                 'comments_count'  => (int) ($a->comments_count ?? 0),
                 'favorites_count' => (int) ($a->favorites_count ?? 0),
                 'views_count'     => (int) ($a->views_count ?? 0),

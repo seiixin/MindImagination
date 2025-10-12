@@ -59,7 +59,7 @@ export default function Navigation() {
       <div className="md:hidden">
         <div className="flex h-12 px-4 items-center justify-between text-white">
           <div className="flex items-center gap-2">
-            <img src="/Images/logo.png" alt="Logo" className="h-6" />
+            <img src="/Images/Logo.png" alt="Logo" className="h-6" />
             <span className="font-semibold text-xs tracking-wide">
               GAME ASSETS - STORE
             </span>
