@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Asset;
 use App\Models\Download;
 use App\Models\Purchase;
-use App\Models\User;
+use App\Models\User; // <-- import User
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -38,9 +38,7 @@ class UserAssetOwnedController extends Controller
             ->latest('id')
             ->paginate($perPage);
 
-        $userPoints = (int) ($user->points ?? 0);
-
-        $paginator->getCollection()->transform(function (Asset $a) use ($user, $userPoints) {
+        $paginator->getCollection()->transform(function (Asset $a) use ($user) {
             $rawImage = (Schema::hasColumn('assets', 'cover_image_path') && !empty($a->cover_image_path))
                 ? $a->cover_image_path
                 : $a->file_path;
@@ -52,15 +50,7 @@ class UserAssetOwnedController extends Controller
                 ->where('asset_id', $a->id)
                 ->exists();
 
-            // Cost is only charged on repeat downloads (if maintenance is set)
-            $costNow   = ($hasDownloadedBefore && $maintenanceCost > 0) ? (int) $maintenanceCost : 0;
-            $canAfford = $userPoints >= $costNow;
-
-            $blockedReason = null;
-            if ($costNow > 0 && !$canAfford) {
-                $blockedReason = 'Not enough points';
-            }
-
+            // Prefer route() but fall back to URL strings if Ziggy/names differ
             $downloadUrl = function () use ($a) {
                 try { return route('user.owned-assets.download', $a->id); }
                 catch (\Throwable) { return url('/my/owned-assets/'.$a->id.'/download'); }
@@ -76,18 +66,12 @@ class UserAssetOwnedController extends Controller
                 'image_url'               => $this->toPublicUrl($rawImage) ?? '/Images/placeholder.png',
                 'points'                  => (int) ($a->points ?? 0),
 
-                'maintenance_cost'        => (float) $maintenanceCost,
+                'maintenance_cost'        => $maintenanceCost,
                 'has_maintenance'         => $maintenanceCost > 0,
                 'can_view_maintenance'    => true,
 
                 'has_downloaded_before'   => $hasDownloadedBefore,
                 'downloadable'            => (bool) (($a->download_file_path ?: $a->file_path)),
-
-                // New hints for UI
-                'cost_now'                => $costNow,
-                'can_afford'              => $canAfford,
-                'downloadable_now'        => $costNow === 0 || $canAfford,
-                'blocked_reason'          => $blockedReason,
 
                 'download_url'            => $downloadUrl(),
                 'preview_url'             => $previewUrl(),
@@ -134,25 +118,17 @@ class UserAssetOwnedController extends Controller
             ->exists();
 
         $maintenanceCost = (float) ($asset->maintenance_cost ?? 0);
-        $costNow         = ($hasDownloadedBefore && $maintenanceCost > 0) ? (int) $maintenanceCost : 0;
-        $userPoints      = (int) ($user->points ?? 0);
-        $canAfford       = $userPoints >= $costNow;
+        $costNow         = ($hasDownloadedBefore && $maintenanceCost > 0) ? $maintenanceCost : 0.0;
+        $canAfford       = (int) ($user->points ?? 0) >= (int) $costNow;
 
-        $payload = [
+        return response()->json([
             'owned'                 => true,
             'has_maintenance'       => $maintenanceCost > 0,
-            'maintenance_cost'      => (float) $maintenanceCost,
+            'maintenance_cost'      => $maintenanceCost,
             'has_downloaded_before' => $hasDownloadedBefore,
             'cost_now'              => $costNow,
             'can_afford'            => $canAfford,
-        ];
-
-        if ($costNow > 0 && !$canAfford) {
-            $payload['message'] = 'Not enough points';
-            return response()->json($payload, 422);
-        }
-
-        return response()->json($payload);
+        ]);
     }
 
     /**
@@ -174,36 +150,16 @@ class UserAssetOwnedController extends Controller
 
         abort_unless($owned, 403, 'You do not own this asset.');
 
-        // Determine cost for this attempt
+        // Determine cost
         $hasDownloadedBefore = Download::query()
             ->where('user_id', $user->id)
             ->where('asset_id', $asset->id)
             ->exists();
 
         $maintenanceCost = (float) ($asset->maintenance_cost ?? 0);
-        $costNow         = ($hasDownloadedBefore && $maintenanceCost > 0) ? (int) $maintenanceCost : 0;
-        $userPoints      = (int) ($user->points ?? 0);
-        $canAfford       = $userPoints >= $costNow;
+        $costNow         = ($hasDownloadedBefore && $maintenanceCost > 0) ? $maintenanceCost : 0.0;
 
-        // Hard stop: not enough points when maintenance applies
-        if ($costNow > 0 && !$canAfford) {
-            $payload = [
-                'owned'                 => true,
-                'has_maintenance'       => $maintenanceCost > 0,
-                'maintenance_cost'      => (float) $maintenanceCost,
-                'has_downloaded_before' => $hasDownloadedBefore,
-                'cost_now'              => $costNow,
-                'can_afford'            => false,
-                'code'                  => 'NOT_ENOUGH_POINTS',
-                'message'               => 'Not enough points',
-            ];
-
-            return $request->expectsJson()
-                ? response()->json($payload, 422)
-                : back()->withErrors($payload['message']);
-        }
-
-        // Confirm flag from JSON or query string (only relevant if there is a maintenance deduction)
+        // Confirm flag from JSON or query string
         $confirmed = $request->boolean('confirm', false)
             || filter_var($request->query('confirm'), FILTER_VALIDATE_BOOLEAN);
 
@@ -211,10 +167,10 @@ class UserAssetOwnedController extends Controller
             $payload = [
                 'owned'                 => true,
                 'has_maintenance'       => $maintenanceCost > 0,
-                'maintenance_cost'      => (float) $maintenanceCost,
+                'maintenance_cost'      => $maintenanceCost,
                 'has_downloaded_before' => $hasDownloadedBefore,
                 'cost_now'              => $costNow,
-                'can_afford'            => true, // we already blocked the "not enough points" case above
+                'can_afford'            => (int) ($user->points ?? 0) >= (int) $costNow,
                 'message'               => 'Confirmation required to deduct maintenance points.',
             ];
             return $request->expectsJson()
@@ -226,17 +182,15 @@ class UserAssetOwnedController extends Controller
         $path = $asset->download_file_path ?: $asset->file_path;
         abort_if(empty($path), 404, 'No downloadable file for this asset.');
 
-        // Deduct + log (lock user row in the same TX to prevent race)
+        // Deduct + log (FIX: lock user row via query, not model instance)
         try {
             DB::transaction(function () use ($request, $user, $asset, $costNow) {
                 if ($costNow > 0) {
                     $u = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
-
-                    // Double-check inside the lock
                     if ((int) ($u->points ?? 0) < (int) $costNow) {
-                        abort(422, 'Not enough points');
+                        abort(422, 'Insufficient points to download this asset.');
                     }
-
+                    // decrement safely
                     $u->points = (int) $u->points - (int) $costNow;
                     $u->save();
                 }
@@ -264,7 +218,7 @@ class UserAssetOwnedController extends Controller
                 'asset_id' => $asset->id,
                 'error'    => $e->getMessage(),
             ]);
-            abort($e->getCode() === 422 ? 422 : 500, $e->getCode() === 422 ? 'Not enough points' : 'Failed to process download.');
+            abort(500, 'Failed to process download.');
         }
 
         // Serve or redirect
@@ -283,6 +237,7 @@ class UserAssetOwnedController extends Controller
         try {
             $publicDisk = Storage::disk('public');
             if ($publicDisk->exists($relative)) {
+                // temporaryUrl may throw on local; wrap it safely
                 try {
                     if (method_exists($publicDisk, 'temporaryUrl')) {
                         $url = $publicDisk->temporaryUrl($relative, now()->addMinutes(5));

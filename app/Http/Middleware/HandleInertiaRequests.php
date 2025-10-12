@@ -32,13 +32,13 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
 
-            // Minimal auth payload para hindi mabigat ang props
             'auth' => [
                 'user' => fn () => optional($request->user())?->only([
                     'id',
                     'name',
                     'email',
                     'email_verified_at',
+                    'points',  // Add the 'points' field here
                 ]),
             ],
 
