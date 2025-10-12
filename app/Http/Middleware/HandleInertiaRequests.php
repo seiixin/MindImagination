@@ -31,8 +31,24 @@ class HandleInertiaRequests extends Middleware
     {
         return [
             ...parent::share($request),
+
+            // Minimal auth payload para hindi mabigat ang props
             'auth' => [
-                'user' => $request->user(),
+                'user' => fn () => optional($request->user())?->only([
+                    'id',
+                    'name',
+                    'email',
+                    'email_verified_at',
+                ]),
+            ],
+
+            // Flash/Status para magamit ng VerifyEmail.jsx (status === 'verification-link-sent')
+            'status' => fn () => session('status'),
+
+            // (Optional) generic flash messages kung gumagamit ka ng with('success')/with('error')
+            'flash' => [
+                'success' => fn () => session('success'),
+                'error'   => fn () => session('error'),
             ],
         ];
     }

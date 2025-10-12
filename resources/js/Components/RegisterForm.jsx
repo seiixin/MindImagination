@@ -8,10 +8,10 @@ export default function RegisterForm() {
     name: '',
     username: '',
     email: '',
-    mobile_number: '',   // <-- match DB
+    mobile_number: '',          // <-- TAMA: mobile_number
     address: '',
     password: '',
-    password_confirmation: '',
+    password_confirmation: '',  // <-- TAMA: kailangan sa confirmed rule
     terms: false,
   });
 
@@ -24,7 +24,9 @@ export default function RegisterForm() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    post('/register', { onSuccess: () => reset('password', 'password_confirmation') });
+    post('/register', {
+      onSuccess: () => reset('password', 'password_confirmation'),
+    });
   };
 
   return (

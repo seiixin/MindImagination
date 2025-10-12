@@ -17,6 +17,8 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\NewPasswordController;
+use App\Http\Controllers\Auth\EmailVerificationPromptController;
+use App\Http\Controllers\Auth\EmailVerificationNotificationController;
 use App\Http\Controllers\Admin\ContactSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\StoreCategoryController;
@@ -33,12 +35,15 @@ use App\Http\Controllers\UserContactUsController;
 use App\Http\Controllers\PolicyAboutController;
 use App\Http\Controllers\Admin\AssetInteractionAdminController as AdminInteractionController;
 
+use Illuminate\Foundation\Auth\EmailVerificationRequest;
+use Google\Client as Google_Client;
+
 /*
 |--------------------------------------------------------------------------
 | Public (Guest)
 |--------------------------------------------------------------------------
 */
-Route::get('/', function (Request $request, StorefrontController $ctrl) {
+Route::get('/', function (Request $request, StoreFrontController $ctrl) {
     return $ctrl->index($request);
 })->name('store');
 
@@ -48,19 +53,13 @@ Route::get('/privacy-policy', fn () => Inertia::render('GuestPages/PrivacyPolicy
 // Guest asset detail (preloaded)
 Route::get('/assets/{slug}', [AssetController::class, 'showBySlug'])->name('assets.details');
 
-/**
- * Views endpoint is PUBLIC (guests + logged-in users).
- * Single route only to avoid conflicts with auth group.
- */
+// Views endpoint is PUBLIC
 Route::post('/assets/{asset}/views', [AssetInteractionController::class, 'viewsStore'])
     ->whereNumber('asset')
     ->name('assets.views.store');
 
-Route::get('/contact/settings', [UserContactUsController::class, 'show'])
-    ->name('contact.settings');
-
-Route::get('/policy/guest', [PolicyAboutController::class, 'index'])
-    ->name('policy.guest.index');
+Route::get('/contact/settings', [UserContactUsController::class, 'show'])->name('contact.settings');
+Route::get('/policy/guest', [PolicyAboutController::class, 'index'])->name('policy.guest.index');
 
 /*
 |--------------------------------------------------------------------------
@@ -80,6 +79,27 @@ Route::middleware('guest')->group(function () {
     Route::get('/reset-password/{token}', [NewPasswordController::class, 'create'])->name('password.reset');
     Route::post('/reset-password', [NewPasswordController::class, 'store']);
 });
+
+/*
+|--------------------------------------------------------------------------
+| Email Verification (Breeze-style)
+|--------------------------------------------------------------------------
+*/
+// Show the verification prompt
+Route::get('/email/verify', EmailVerificationPromptController::class)
+    ->middleware('auth')
+    ->name('verification.notice');
+
+// Handle the verification link
+Route::get('/email/verify/{id}/{hash}', function (EmailVerificationRequest $request) {
+    $request->fulfill();
+    return redirect()->intended(route('dashboard', absolute: false));
+})->middleware(['auth', 'signed'])->name('verification.verify');
+
+// Resend verification email (throttled)
+Route::post('/email/verification-notification', [EmailVerificationNotificationController::class, 'store'])
+    ->middleware(['auth', 'throttle:6,1'])
+    ->name('verification.send');
 
 /*
 |--------------------------------------------------------------------------
@@ -113,27 +133,18 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get ('/payment-success',  [PurchaseController::class, 'success'])->name('payment.success');
     Route::get ('/payment-failed',   [PurchaseController::class, 'failed'])->name('payment.failed');
 
-    // Owned Assets (User-facing)
+    // Owned Assets
     Route::prefix('my')->name('user.')->group(function () {
-        Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])
-            ->name('owned-assets.index');
-
-        // Preview (GET) for confirm dialog
+        Route::get('/owned-assets', [UserAssetOwnedController::class, 'index'])->name('owned-assets.index');
         Route::get('/owned-assets/{asset}/download/preview', [UserAssetOwnedController::class, 'preview'])
-            ->whereNumber('asset')
-            ->name('owned-assets.preview');   // <-- matches Dashboard.jsx
-
+            ->whereNumber('asset')->name('owned-assets.preview');
         Route::get('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
-            ->whereNumber('asset')
-            ->name('owned-assets.download.get'); // optional extra name
-
-        // Actual download (POST): deduct points & return URL/stream
+            ->whereNumber('asset')->name('owned-assets.download.get');
         Route::post('/owned-assets/{asset}/download', [UserAssetOwnedController::class, 'download'])
-            ->whereNumber('asset')
-            ->name('owned-assets.download');
+            ->whereNumber('asset')->name('owned-assets.download');
     });
 
-    // Asset Interactions (CRUD) — auth-scoped
+    // Asset Interactions (CRUD)
     Route::prefix('assets/{asset}')
         ->where(['asset' => '[0-9]+'])
         ->controller(AssetInteractionController::class)
@@ -153,7 +164,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/favorites/{id}',   'favoritesDestroy')->name('assets.favorites.destroy');
 
             Route::get   ('/views',            'viewsIndex')->name('assets.views.index');
-            // NOTE: POST /assets/{asset}/views is public (defined above).
         });
 });
 
@@ -178,7 +188,7 @@ Route::middleware(['auth', 'verified', 'is_admin'])
         Route::put('/users/{user}', [UserController::class, 'update']);
         Route::delete('/users/{user}', [UserController::class, 'destroy']);
 
-        // 🔹 Lightweight users JSON for dropdowns (id + name [+ email]), separate from the Inertia page
+        // Lightweight users JSON
         Route::get('/users-light', function (Request $request) {
             $q = trim((string) $request->get('q', ''));
             $limit = (int) ($request->integer('limit') ?: 100);
@@ -254,66 +264,32 @@ Route::middleware(['auth', 'verified', 'is_admin'])
         Route::delete('/store-plans/{id}',[StorePlanController::class, 'destroy']);
 
         // Asset Ownership (used by Users admin page)
-        Route::get('/users/{user}/owned-assets', [UserOwnedAssetController::class, 'index'])
-            ->name('users.owned-assets.index');
-        Route::post('/users/{user}/owned-assets', [UserOwnedAssetController::class, 'store'])
-            ->name('users.owned-assets.store');
-        Route::patch('/owned-assets/{purchase}', [UserOwnedAssetController::class, 'update'])
-            ->name('owned-assets.update');
-        Route::delete('/owned-assets/{purchase}', [UserOwnedAssetController::class, 'destroy'])
-            ->name('owned-assets.destroy');
-        Route::get('/assets-light', [UserOwnedAssetController::class, 'assetsLight'])
-            ->name('assets.light');
+        Route::get('/users/{user}/owned-assets', [UserOwnedAssetController::class, 'index'])->name('users.owned-assets.index');
+        Route::post('/users/{user}/owned-assets', [UserOwnedAssetController::class, 'store'])->name('users.owned-assets.store');
+        Route::patch('/owned-assets/{purchase}', [UserOwnedAssetController::class, 'update'])->name('owned-assets.update');
+        Route::delete('/owned-assets/{purchase}', [UserOwnedAssetController::class, 'destroy'])->name('owned-assets.destroy');
+        Route::get('/assets-light', [UserOwnedAssetController::class, 'assetsLight'])->name('assets.light');
 
-        /*
-        |--------------------------------------------------------------
-        | Admin-only JSON routes for asset interactions & generators
-        |--------------------------------------------------------------
-        */
         Route::prefix('interactions')->name('interactions.')->controller(AdminInteractionController::class)->group(function () {
-            // Comments (full CRUD with user + asset selection)
             Route::get   ('/comments',        'commentsIndex')->name('comments.index');
             Route::post  ('/comments',        'commentsStore')->name('comments.store');
             Route::put   ('/comments/{id}',   'commentsUpdate')->name('comments.update');
             Route::delete('/comments/{id}',   'commentsDestroy')->name('comments.destroy');
 
-            // Favorites (list/create/delete + bulk generate)
             Route::get   ('/favorites',       'favoritesIndex')->name('favorites.index');
             Route::post  ('/favorites',       'favoritesStore')->name('favorites.store');
             Route::delete('/favorites/{id}',  'favoritesDestroy')->name('favorites.destroy');
             Route::post  ('/favorites/generate', 'favoritesGenerate')->name('favorites.generate');
 
-            // Ratings (list/create/update/delete + bulk generate)
             Route::get   ('/ratings',         'ratingsIndex')->name('ratings.index');
             Route::post  ('/ratings',         'ratingsStore')->name('ratings.store');
             Route::put   ('/ratings/{id}',    'ratingsUpdate')->name('ratings.update');
             Route::delete('/ratings/{id}',    'ratingsDestroy')->name('ratings.destroy');
             Route::post  ('/ratings/generate','ratingsGenerate')->name('ratings.generate');
 
-            // Views (list/create/delete + bulk generate)
             Route::get   ('/views',           'viewsIndex')->name('views.index');
             Route::post  ('/views',           'viewsStore')->name('views.store');
             Route::delete('/views/{id}',      'viewsDestroy')->name('views.destroy');
             Route::post  ('/views/generate',  'viewsGenerate')->name('views.generate');
         });
     });
-    
-
-
-use Google\Client as Google_Client;
-
-Route::get('/test-drive', function () {
-    $client = new Google_Client();
-    $client->setClientId(env('GOOGLE_DRIVE_CLIENT_ID'));
-    $client->setClientSecret(env('GOOGLE_DRIVE_CLIENT_SECRET'));
-    $client->setAccessType('offline');
-
-    try {
-        $token = env('GOOGLE_DRIVE_REFRESH_TOKEN');
-        $client->refreshToken($token);
-        $access = $client->getAccessToken();
-        dd($access);
-    } catch (\Exception $e) {
-        dd('Error: ' . $e->getMessage());
-    }
-});

@@ -3,18 +3,26 @@
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class IsAdmin
 {
-    public function handle($request, Closure $next)
+    public function handle(Request $request, Closure $next)
     {
-        // Adjust field name if your users table uses 'is_admin'
-        if (Auth::check() && Auth::user()->is_admin) {
+        $user = Auth::user();
+
+        // Must be logged in AND pass the model's admin logic
+        if ($user && method_exists($user, 'isAdmin') && $user->isAdmin()) {
             return $next($request);
         }
 
-        // Optional: redirect somewhere else if not admin
-        return redirect()->route('dashboard');
+        // For API/AJAX requests, return 403; otherwise redirect
+        if ($request->expectsJson()) {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        // Optional: flash message if you use Inertia/Blade flashes
+        return redirect()->route('dashboard')->with('error', 'Admin access required.');
     }
 }

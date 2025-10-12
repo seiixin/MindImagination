@@ -2,11 +2,12 @@
 
 namespace App\Models;
 
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
     use HasFactory, Notifiable;
 
@@ -83,9 +84,9 @@ class User extends Authenticatable
      | Attribute / Helper Methods
      * ---------------------------------------------------------------------- */
 
+    /** Treat either boolean flag or role enum as admin */
     public function isAdmin(): bool
     {
-        // Either boolean flag or role enum—treat either as admin
         return (bool) $this->is_admin || $this->role === 'admin';
     }
 
@@ -108,6 +109,33 @@ class User extends Authenticatable
     public function grantAssetManually(int $assetId): Purchase
     {
         return Purchase::grantManual($this->id, $assetId);
+    }
+
+    /* ----------------------------------------------------------------------
+     | Mutators / Auto-sync
+     * ---------------------------------------------------------------------- */
+
+    /**
+     * Auto-sync: when email_verified_at is set, force verification_status = 'verified'.
+     * Works for mass-assign, markEmailAsVerified(), admin edits, seeders, etc.
+     */
+    public function setEmailVerifiedAtAttribute($value): void
+    {
+        $this->attributes['email_verified_at'] = $value;
+
+        if (!empty($value)) {
+            $this->attributes['verification_status'] = 'verified';
+        }
+    }
+
+    /**
+     * Auto-sync is_admin with role whenever role is set.
+     * Controllers also enforce this, but keeping it here ensures consistency.
+     */
+    public function setRoleAttribute($value): void
+    {
+        $this->attributes['role'] = $value;
+        $this->attributes['is_admin'] = ($value === 'admin');
     }
 
     /* ----------------------------------------------------------------------

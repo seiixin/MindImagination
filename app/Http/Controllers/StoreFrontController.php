@@ -14,14 +14,14 @@ class StorefrontController extends Controller
 {
     public function index(Request $request)
     {
-        // Slides (safe sa missing columns)
+        // -------- Slides (defensive sa missing columns)
         $slides = Slide::query()
             ->when(Schema::hasColumn('slides', 'is_featured'), fn ($q) => $q->where('is_featured', true))
             ->when(Schema::hasColumn('slides', 'is_active'), fn ($q) => $q->where('is_active', true))
             ->when(Schema::hasColumn('slides', 'sort_order'), fn ($q) => $q->orderBy('sort_order'))
             ->get(['id', 'image_path', 'details']);
 
-        // Base selectable asset fields
+        // -------- Base selectable asset fields
         $assetFields = array_values(array_filter([
             'id',
             'title',
@@ -34,25 +34,25 @@ class StorefrontController extends Controller
             Schema::hasColumn('assets', 'category_id') ? 'category_id' : null,
         ]));
 
+        // -------- Query (with live counts & avg rating)
         $assetsQuery = Asset::query()
             ->when(Schema::hasColumn('assets', 'is_published'), fn ($q) => $q->where('is_published', 1))
-            // live counts
             ->withCount(['comments', 'favorites', 'views'])
-            // average rating (guard kung walang support)
             ->when(
                 method_exists(app('db')->connection()->getQueryGrammar(), 'compileAverage'),
-                fn ($q) => $q->withAvg('ratings', 'rating')
+                fn ($q) => $q->withAvg('ratings', 'rating') // adds alias ratings_avg_rating
             )
-            // optional category fallback
+            // Eager-load category with NAME (IMPORTANT)
             ->when(Schema::hasColumn('assets', 'category_id'), fn ($q) => $q->with([
-                'category:id,additional_points,purchase_cost'
+                // expect relation Asset::belongsTo(StoreCategory::class, 'category_id')->as('category')
+                'category:id,name,additional_points,purchase_cost',
             ]))
             ->latest('id')
             ->limit(24);
 
         $assetsCollection = $assetsQuery->get($assetFields);
 
-        // Owned IDs for signed-in user
+        // -------- Owned asset IDs (for current user)
         $ownedIds = [];
         if (auth()->check()) {
             $statusCompleted = defined(Purchase::class . '::STATUS_COMPLETED')
@@ -69,9 +69,9 @@ class StorefrontController extends Controller
             $ownedIds = $ownedQuery->pluck('asset_id')->all();
         }
 
-        // Map to payload expected by Store.jsx
+        // -------- Map to frontend payload (now includes category_name)
         $assets = $assetsCollection->map(function ($a) use ($ownedIds) {
-            $slug = Schema::hasColumn('assets', 'slug') && !empty($a->slug)
+            $slug = (Schema::hasColumn('assets', 'slug') && !empty($a->slug))
                 ? $a->slug
                 : Str::slug($a->title ?? (string) $a->id);
 
@@ -79,8 +79,12 @@ class StorefrontController extends Controller
                 ? $a->cover_image_path
                 : $a->file_path;
 
-            // avg rating field name depends on withAvg
             $avg = isset($a->ratings_avg_rating) ? (float) $a->ratings_avg_rating : 0.0;
+
+            // Pull from relation safely
+            $categoryName = optional($a->category)->name; // <<--- HERE
+            $categoryPoints = optional($a->category)->additional_points;
+            $categoryPrice  = optional($a->category)->purchase_cost;
 
             return [
                 'id'              => $a->id,
@@ -88,8 +92,9 @@ class StorefrontController extends Controller
                 'slug'            => $slug,
                 'image_url'       => $imageUrl,
                 'description'     => $a->description ?? null,
-                'points'          => $a->points ?? optional($a->category)->additional_points,
-                'price'           => $a->price  ?? optional($a->category)->purchase_cost,
+                'points'          => $a->points ?? $categoryPoints,
+                'price'           => $a->price  ?? $categoryPrice,
+                'category_name'   => $categoryName ?? 'Uncategorized', // <<--- send to FE
                 'comments_count'  => (int) ($a->comments_count ?? 0),
                 'favorites_count' => (int) ($a->favorites_count ?? 0),
                 'views_count'     => (int) ($a->views_count ?? 0),

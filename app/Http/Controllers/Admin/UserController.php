@@ -121,14 +121,19 @@ class UserController extends Controller
             // Configurable default free points
             $defaultFreePoints = (int) config('app.default_free_points', 100);
 
+            // Normalize a couple of inputs
+            $email    = strtolower(trim($validated['emailAddress']));
+            $username = trim($validated['userName']);
+            $mobile   = trim($validated['mobileNumber']);
+
             $role     = $validated['access'];
             $isAdmin  = $role === 'admin' ? 1 : 0;
 
             $userData = [
                 'name'                 => $validated['fullName'],
-                'username'             => $validated['userName'],
-                'email'                => strtolower($validated['emailAddress']),
-                'mobile_number'        => $validated['mobileNumber'],
+                'username'             => $username,
+                'email'                => $email,
+                'mobile_number'        => $mobile,
                 'address'              => $validated['address'] ?? null,
                 'points'               => isset($validated['userPoints'])
                                             ? (int) $validated['userPoints']
@@ -193,14 +198,19 @@ class UserController extends Controller
             // Capture old status BEFORE update
             $wasEnabled = $user->getOriginal('active_status') === 'enabled';
 
+            // Normalize a couple of inputs
+            $email    = strtolower(trim($validated['emailAddress']));
+            $username = trim($validated['userName']);
+            $mobile   = trim($validated['mobileNumber']);
+
             $role    = $validated['access'];
             $isAdmin = $role === 'admin' ? 1 : 0;
 
             $updateData = [
                 'name'                 => $validated['fullName'],
-                'username'             => $validated['userName'],
-                'email'                => strtolower($validated['emailAddress']),
-                'mobile_number'        => $validated['mobileNumber'],
+                'username'             => $username,
+                'email'                => $email,
+                'mobile_number'        => $mobile,
                 'address'              => $validated['address'] ?? null,
                 'verification_status'  => $validated['verificationStatus'],
                 'active_status'        => $validated['activeStatus'],
