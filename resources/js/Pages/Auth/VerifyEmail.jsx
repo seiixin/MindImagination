@@ -1,20 +1,23 @@
 // resources/js/Pages/Auth/VerifyEmail.jsx
 import React from 'react';
-import { Link, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import GuestLayout from '@/Layouts/GuestLayout';
 
 export default function VerifyEmail() {
-  const { props } = usePage(); // expects { status } from controller
+  const { props } = usePage(); // expects { status } from controller/middleware share
   const status = props?.status || null;
 
   const { post, processing } = useForm({});
 
   const resend = (e) => {
     e.preventDefault();
-    post('/email/verification-notification'); // route('verification.send')
+    // route: POST /email/verification-notification
+    post('/email/verification-notification', { preserveScroll: true });
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0e6ba0] px-4">
+    <GuestLayout>
+      <Head title="Verify Email" />
       <div className="w-full max-w-md relative backdrop-blur-md bg-[#14628dcc]/80 border-[5px] border-[#0e6ba0] shadow-inner rounded-xl p-6 text-white overflow-hidden">
         <div className="absolute inset-0 pointer-events-none rounded-xl border border-[#29b4e2]/40 blur-sm" />
 
@@ -54,6 +57,6 @@ export default function VerifyEmail() {
           Didn’t receive the email? Check your spam folder, or click “Resend Verification Email”.
         </div>
       </div>
-    </div>
+    </GuestLayout>
   );
 }
